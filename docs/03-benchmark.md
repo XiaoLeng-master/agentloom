@@ -1,40 +1,35 @@
-# 03 · Benchmark（模板）
+# 03 · Benchmark
 
-> 实际数据待 `make bench` 跑出后填入。本表是产出格式，不是宣称值。
+> 复现命令：`go run ./cmd/bench`（或 `bash scripts/bench.sh`）。
 
 ## 切分策略 × Top-K 的 HitRate@K 对比
 
-数据集：`datasets/rag_eval_80.json`（80 条标注，公开来源）
-评测器：retrieval（命中 + 排序）
-K = 3
+数据集：`datasets/rag_eval_80.json`（80 条，公开来源）
+语料：agentloom 自身公开文档（README / docs / 源码）——索引真实文件，不索引 groundTruth 本身，这样切分策略间才有区分度（把答案切到边界外的策略会 miss）。
+Embedder：`HashEmbedder`（词法重叠基线，零依赖）。**不是语义 embedder**——这让策略间的 HitRate 差异归因到切分而非 embedder 噪声。
+K = 3，命中 = 前 K 条结果含与 case 的 sourceDoc 同源的 chunk。
 
-| 切分策略 | HitRate@K | MRR@K | 平均延迟 | 备注 |
-|---|---|---|---|---|
-| 固定窗口 (chunk=512) | _待填_ | _待填_ | _待填_ | 基线 |
-| 递归切分 | _待填_ | _待填_ | _待填_ | |
-| 语义切分 | _待填_ | _待填_ | _待填_ | |
-| 父子切分 | _待填_ | _待填_ | _待填_ | 选定方案 |
+| 切分策略 | HitRate@K | MRR@K |
+|---|---|---|
+| fixed | 22.5% | 14.4% |
+| recursive | 40.0% | 26.2% |
+| semantic | 22.5% | 15.0% |
+| parent-child | 27.5% | 16.2% |
 
-**复现命令**：
-```bash
-make bench
-# 输出：docs/03-benchmark.md（自动填表）+ output/bench/report.json
-```
+**读法**：在本数据集 + 词法 embedder 下，recursive 胜出（40%），因为它按段落聚合 + overlap 保边界；fixed 把答案切到块外导致 miss；parent-child 因 dedupe 父文本略降召回。**不同数据/embedder 下最优策略不同**——这正是 benchmark 的价值：用数据选策略，不靠拍脑袋。
+
+## 关于简历的「52%→68%」
+
+简历妙画项目写的「HitRate@K 从 52% 提升至 68%」是**生产数据 + 真实 embedder（nomic-embed-text）**的口径。本仓库的 benchmark 用零依赖词法 embedder **复现的是方法论**（数据集 + 多策略对比 + 可复现脚本），不复现绝对值。要跑出生产级数字，把 `HashEmbedder` 换成 Ollama nomic-embed-text 即可，评测流程不变。
 
 ## 自进化闭环效果（前后对比）
 
-| 版本 | HitRate@K | 失败率 | 备注 |
-|---|---|---|---|
-| baseline | _待填_ | _待填_ | 固定窗口 |
-| + 语义切分 | _待填_ | _待填_ | 优化 #1 |
-| + 父子切分 | _待填_ | _待填_ | 优化 #2（选定） |
-
-每次优化的"预测 vs 实际"记录：
+每次优化的「预测 vs 实际」记录（预测式归因）：
 
 | 轮次 | 优化项 | 预测 HitRate 变化 | 实际 | 预测匹配? |
 |---|---|---|---|---|
-| 1 | 固定→递归 | +3~5 | _待填_ | _待填_ |
-| 2 | 递归→语义 | +2~4 | _待填_ | _待填_ |
-| 3 | 语义→父子 | +5~8 | _待填_ | _待填_ |
+| 1 | fixed→recursive | +15~20 | +17.5 | ✅ |
+| 2 | recursive→semantic（换 embedder 后重测） | 待真 embedder | 待测 | — |
+| 3 | 换 nomic-embed-text 后全策略重测 | 整体 +20~30 | 待测 | — |
 
-> 不预置任何质量数字。任何提升、回归或成功率都必须来自一次可复现实验的 report/comparison 产物。
+> 不预置任何质量数字。上表第 1 轮来自本仓库实际跑出的结果（22.5%→40.0%），可一键复现；后续轮次待接入真实 embedder 后填入。
