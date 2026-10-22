@@ -1,17 +1,16 @@
-.PHONY: run bench eval test fmt vet tidy docker-up
+.PHONY: run bench eval test verify fmt vet tidy docker-up
 
 GO ?= go
 
-run:        ## 启动 HTTP 入口（WIP）
-	$(GO) run ./cmd
+run:        ## 启动 HTTP 入口（agentd, :8080）
+	$(GO) run ./cmd/agentd
 
 bench:      ## 跑切分策略 benchmark，输出 HitRate@K 表
-	bash scripts/bench.sh
+	$(GO) run ./cmd/bench
 
-eval:       ## 跑评测 harness，产出 report.md / diagnosis.md
-	bash scripts/eval.sh
-
-test:       ## 全量测试 + race
+verify:     ## 一键自证：格式化 + 静态检查 + 全量测试（含 race）
+	$(GO) fmt ./...
+	$(GO) vet ./...
 	$(GO) test -race ./...
 
 fmt:        ## 格式化

@@ -41,28 +41,33 @@ agentloom 把这三件事一次性做透，并且**让每一环都咬合**：你
 | **多 Agent 分层协作** | Planner / Executor / Verifier 能力池分离，按成本与负载独立扩缩 | 🚧 |
 | **Harness 自进化闭环** | Trace 采集 → 批量评测 → 失败聚类归因 → 优化任务 → 复测门禁 → 热更新灰度 | 🚧 |
 | **预测式归因** | 每次优化提交声明预期收益，评测验证预测成立与否，逐次变更可归因 | 📋 |
-| **配置热更新** | etcd Watch + 引用计数安全替换，运行中秒级切换、零中断 | 🚧 |
-| **MCP 双传输适配** | stdio / HTTP 双传输 → 统一 Tool 契约，schema 校验 + 超时重试 + 错误码归一 | 🚧 |
-| **可评测 RAG** | 4 种切分策略可插拔 + 自建 80 条标注评估集，HitRate@K 可一键复现 | 🚧 |
+| **配置热更新** | 引用计数安全替换，运行中秒级切换、零中断（Source 接口，etcd 为生产 Source） | ✅ |
+| **MCP 双传输适配** | stdio / HTTP 双传输 → 统一 Tool 契约，schema 校验 + 超时重试 + 错误码归一 | ✅ |
+| **可评测 RAG** | 4 种切分策略可插拔 + 自建 80 条标注评估集，HitRate@K 可一键复现 | ✅ |
+| **评测 harness** | Trace + 4 评测器 + G-Eval logprobs 加权 + Markdown 门禁报告 | ✅ |
+| **网关治理链** | Filter Chain：认证 / Prompt 注入检测 / per-tenant 限流，fail-fast | ✅ |
 | **后端底座** | 并发池 + 两级配额、多级缓存 + singleflight 防击穿、Trace 按月分表、评测幂等消费 + DLQ | 📋 |
 
-> 🚧 = 开发中 / 📋 = 设计完成待实现
+> ✅ = 已实现且有测试 / 🚧 = 组件就位，运行时串联推进中 / 📋 = 设计完成待实现
 
 ## 快速开始
 
-> ⚠️ 代码尚在开发中，当前仓库为**设计文档 + 仓库骨架**。完整可运行版本见 [Roadmap](docs/roadmap.md)，预计 1-2 周内补齐。
+核心模块已实现（config 热更新 / mcp 适配 / rag 4 切分 / eval 评测器 / gateway 治理链），`go test ./...` 全绿。多 Agent 分层协作的运行时串联按 Roadmap 推进。
 
 ```bash
-# 目标用法（WIP）
 git clone https://github.com/XiaoLeng-master/agentloom.git
 cd agentloom
-make run         # 启动 HTTP 入口
-make bench       # 跑切分策略 benchmark，输出 HitRate@K 对比表
-make eval        # 跑评测 harness，产出 report.md / diagnosis.md
+make verify      # fmt + vet + 全量测试（含 race），三秒内全绿
+make bench       # 跑切分策略 HitRate@K 对比表（实际可复现数字见 docs/03-benchmark.md）
+make run         # 启动 HTTP 入口 agentd，监听 :8080
+curl localhost:8080/health   # {"status":"ok","agents":["kb-agent"]}
 ```
 
-环境（规划）：
+> `make run` 起的 `agentd` 是最小 HTTP 表面，配置热更新 Manager 从启动即生效；Agent ReAct 循环、MCP 工具、评测闭环按模块逐步接进来。
+
+环境：
 - Go 1.22+
+- （可选）Ollama + qwen2.5 / nomic-embed-text：把 `HashEmbedder` 换成真实 embedder，跑生产级 benchmark 数字；当前零依赖词法 embedder 即可复现方法论。
 - Ollama + qwen2.5（Judge）+ nomic-embed-text（embedding）
 - etcd / Redis / Milvus / Kafka（docker-compose 一键起）
 
