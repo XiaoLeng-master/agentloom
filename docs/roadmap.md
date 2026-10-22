@@ -13,7 +13,7 @@
 | D7 | `internal/eval`（Trace + 4 评测器 + G-Eval） | baseline/optimized 出对比报告 |
 | D8 | `internal/gateway`（filter chain，可选）+ README + 架构图定稿 | 别人能照 README 跑起来 |
 | D9 | 录 2 分钟演示视频 / GIF | 放进 README 顶部 |
-| D10 | 写简历「个人项目」栏 + 面试口径 | 与代码逐条对得上 |
+| D10 | 写项目介绍 + 使用口径 | 与代码逐条对得上 |
 
 ## 里程碑
 
