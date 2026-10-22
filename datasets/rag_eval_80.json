@@ -1,0 +1,562 @@
+[
+  {
+    "id": "eval_001",
+    "type": "retrieval",
+    "question": "agentloom 的四层架构是哪四层？",
+    "groundTruth": "控制面、执行面、记忆面、观测面",
+    "sourceDoc": "docs/01-architecture.md"
+  },
+  {
+    "id": "eval_002",
+    "type": "retrieval",
+    "question": "ReAct 循环的四个阶段是什么？",
+    "groundTruth": "Think、Act、Observe、下一轮 Think",
+    "sourceDoc": "internal/core/agent.go"
+  },
+  {
+    "id": "eval_003",
+    "type": "retrieval",
+    "question": "DefaultMaxIter 的默认值是多少？",
+    "groundTruth": "10",
+    "sourceDoc": "internal/core/agent.go"
+  },
+  {
+    "id": "eval_004",
+    "type": "retrieval",
+    "question": "Agent 接口暴露哪三个方法？",
+    "groundTruth": "Name、Schema、Call",
+    "sourceDoc": "internal/core/tool.go"
+  },
+  {
+    "id": "eval_005",
+    "type": "retrieval",
+    "question": "LLMClient 接口的方法名是什么？",
+    "groundTruth": "Complete",
+    "sourceDoc": "internal/core/llm.go"
+  },
+  {
+    "id": "eval_006",
+    "type": "retrieval",
+    "question": "Message 的四种 Role 是什么？",
+    "groundTruth": "system、user、assistant、tool",
+    "sourceDoc": "internal/core/message.go"
+  },
+  {
+    "id": "eval_007",
+    "type": "retrieval",
+    "question": "ToolCall 包含哪三个字段？",
+    "groundTruth": "ID、Name、Args",
+    "sourceDoc": "internal/core/message.go"
+  },
+  {
+    "id": "eval_008",
+    "type": "retrieval",
+    "question": "Registry 的三个方法是什么？",
+    "groundTruth": "Register、Create、Names",
+    "sourceDoc": "internal/core/factory.go"
+  },
+  {
+    "id": "eval_009",
+    "type": "retrieval",
+    "question": "配置热更新用哪个组件做发布通道？",
+    "groundTruth": "etcd（生产 Source）",
+    "sourceDoc": "internal/config/source.go"
+  },
+  {
+    "id": "eval_010",
+    "type": "retrieval",
+    "question": "AgentHandle 的 IsStale 判断什么？",
+    "groundTruth": "当前配置是否已被新版本取代",
+    "sourceDoc": "internal/config/config.go"
+  },
+  {
+    "id": "eval_011",
+    "type": "retrieval",
+    "question": "Manager.Drain 的作用是什么？",
+    "groundTruth": "等待被取代 entry 的引用计数归零",
+    "sourceDoc": "internal/config/config.go"
+  },
+  {
+    "id": "eval_012",
+    "type": "retrieval",
+    "question": "Reload 返回值是什么？",
+    "groundTruth": "被取代版本的在途引用计数",
+    "sourceDoc": "internal/config/config.go"
+  },
+  {
+    "id": "eval_013",
+    "type": "retrieval",
+    "question": "MCP 有哪两种传输？",
+    "groundTruth": "stdio 和 HTTP",
+    "sourceDoc": "internal/mcp/transport.go"
+  },
+  {
+    "id": "eval_014",
+    "type": "retrieval",
+    "question": "StdioTransport 如何防半读？",
+    "groundTruth": "按行分隔 JSON 消息",
+    "sourceDoc": "internal/mcp/stdio.go"
+  },
+  {
+    "id": "eval_015",
+    "type": "retrieval",
+    "question": "MCPTool 实现哪个接口？",
+    "groundTruth": "core.Tool",
+    "sourceDoc": "internal/mcp/adapter.go"
+  },
+  {
+    "id": "eval_016",
+    "type": "retrieval",
+    "question": "AdvertiseAll 的作用？",
+    "groundTruth": "把整个 MCP server 的工具转成 core.Tool 集",
+    "sourceDoc": "internal/mcp/adapter.go"
+  },
+  {
+    "id": "eval_017",
+    "type": "retrieval",
+    "question": "RAG 有哪四种切分策略？",
+    "groundTruth": "Fixed、Recursive、Semantic、ParentChild",
+    "sourceDoc": "internal/rag/splitter.go"
+  },
+  {
+    "id": "eval_018",
+    "type": "retrieval",
+    "question": "ParentChild 切分为什么更优？",
+    "groundTruth": "小块精准检索、父块注入完整上下文",
+    "sourceDoc": "internal/rag/splitter.go"
+  },
+  {
+    "id": "eval_019",
+    "type": "retrieval",
+    "question": "HashEmbedder 的作用？",
+    "groundTruth": "无依赖确定性 embedder，让 HitRate 差异归因到切分",
+    "sourceDoc": "internal/rag/embedding.go"
+  },
+  {
+    "id": "eval_020",
+    "type": "retrieval",
+    "question": "MemoryStore 用什么相似度？",
+    "groundTruth": "cosine similarity",
+    "sourceDoc": "internal/rag/store.go"
+  },
+  {
+    "id": "eval_021",
+    "type": "retrieval",
+    "question": "Retriever.Retrieve 返回什么？",
+    "groundTruth": "Top-K 上下文（Context 列表）",
+    "sourceDoc": "internal/rag/retriever.go"
+  },
+  {
+    "id": "eval_022",
+    "type": "retrieval",
+    "question": "自进化闭环有几环？",
+    "groundTruth": "7 环：Trace 采集→Kafka→评测→归因→优化→复测→热更新",
+    "sourceDoc": "docs/01-architecture.md"
+  },
+  {
+    "id": "eval_023",
+    "type": "retrieval",
+    "question": "预测式归因比分数涨跌多什么信息？",
+    "groundTruth": "多一比特归因信息（预测匹配/证伪）",
+    "sourceDoc": "docs/02-design-decisions.md"
+  },
+  {
+    "id": "eval_024",
+    "type": "retrieval",
+    "question": "评测器为什么规则优先、Judge 兜底？",
+    "groundTruth": "规则可复现，避免评测器本身飘带偏闭环",
+    "sourceDoc": "docs/02-design-decisions.md"
+  },
+  {
+    "id": "eval_025",
+    "type": "retrieval",
+    "question": "后端底座横切哪几项？",
+    "groundTruth": "并发池、MQ削峰、分表、幂等、缓存一致性",
+    "sourceDoc": "docs/01-architecture.md"
+  },
+  {
+    "id": "eval_026",
+    "type": "retrieval",
+    "question": "Agent 请求放大效应是什么？",
+    "groundTruth": "1 请求放大为多次 LLM/工具/检索下游调用",
+    "sourceDoc": "docs/02-design-decisions.md"
+  },
+  {
+    "id": "eval_027",
+    "type": "retrieval",
+    "question": "singleflight 防什么？",
+    "groundTruth": "缓存击穿（stampede）",
+    "sourceDoc": "docs/02-design-decisions.md"
+  },
+  {
+    "id": "eval_028",
+    "type": "retrieval",
+    "question": "多 Agent 按什么拆池？",
+    "groundTruth": "按能力（Planner/Executor/Verifier）而非按 Agent",
+    "sourceDoc": "docs/01-architecture.md"
+  },
+  {
+    "id": "eval_029",
+    "type": "retrieval",
+    "question": "Verifier 池用什么模型？",
+    "groundTruth": "规则 + 小模型",
+    "sourceDoc": "docs/01-architecture.md"
+  },
+  {
+    "id": "eval_030",
+    "type": "retrieval",
+    "question": "Planner 池的特点？",
+    "groundTruth": "贵模型、少而精、负责拆任务",
+    "sourceDoc": "docs/01-architecture.md"
+  },
+  {
+    "id": "eval_031",
+    "type": "retrieval",
+    "question": "Executor 池的特点？",
+    "groundTruth": "平价模型、横向扩、调工具写回",
+    "sourceDoc": "docs/01-architecture.md"
+  },
+  {
+    "id": "eval_032",
+    "type": "retrieval",
+    "question": "G-Eval 用什么加权打分？",
+    "groundTruth": "候选评分 Token 的概率分布归一化加权",
+    "sourceDoc": "docs/02-design-decisions.md"
+  },
+  {
+    "id": "eval_033",
+    "type": "retrieval",
+    "question": "Trace 为什么走 Kafka？",
+    "groundTruth": "高频写不阻塞主链路 + 可回放做回归",
+    "sourceDoc": "docs/02-design-decisions.md"
+  },
+  {
+    "id": "eval_034",
+    "type": "retrieval",
+    "question": "项目用什么语言实现？",
+    "groundTruth": "Go",
+    "sourceDoc": "README.md"
+  },
+  {
+    "id": "eval_035",
+    "type": "retrieval",
+    "question": "项目 License 是什么？",
+    "groundTruth": "MIT",
+    "sourceDoc": "LICENSE"
+  },
+  {
+    "id": "eval_036",
+    "type": "retrieval",
+    "question": "agentloom 的 GitHub 地址？",
+    "groundTruth": "github.com/XiaoLeng-master/agentloom",
+    "sourceDoc": "README.md"
+  },
+  {
+    "id": "eval_037",
+    "type": "retrieval",
+    "question": "10 天 Roadmap 的 D1 产出什么？",
+    "groundTruth": "core：ReAct + factory/registry + 单测",
+    "sourceDoc": "docs/roadmap.md"
+  },
+  {
+    "id": "eval_038",
+    "type": "retrieval",
+    "question": "D2 的产出？",
+    "groundTruth": "config 热更新 + 引用计数 + 并发单测",
+    "sourceDoc": "docs/roadmap.md"
+  },
+  {
+    "id": "eval_039",
+    "type": "retrieval",
+    "question": "D3 的产出？",
+    "groundTruth": "mcp stdio/http 适配 + 统一 Tool",
+    "sourceDoc": "docs/roadmap.md"
+  },
+  {
+    "id": "eval_040",
+    "type": "retrieval",
+    "question": "D5 的产出？",
+    "groundTruth": "自建 80 条评估集 + bench 脚本",
+    "sourceDoc": "docs/roadmap.md"
+  },
+  {
+    "id": "eval_041",
+    "type": "retrieval",
+    "question": "D7 的产出？",
+    "groundTruth": "eval：Trace + 4 评测器 + G-Eval",
+    "sourceDoc": "docs/roadmap.md"
+  },
+  {
+    "id": "eval_042",
+    "type": "qa",
+    "question": "ReAct 循环为什么设迭代上限？",
+    "groundTruth": "防止模型反复调用工具导致死循环",
+    "sourceDoc": "internal/core/agent.go"
+  },
+  {
+    "id": "eval_043",
+    "type": "qa",
+    "question": "context 为什么贯穿工具调用？",
+    "groundTruth": "HTTP 取消能逐层 unwind 到每个工具",
+    "sourceDoc": "internal/core/agent.go"
+  },
+  {
+    "id": "eval_044",
+    "type": "qa",
+    "question": "未知工具为什么不 panic？",
+    "groundTruth": "作为 Observation 回喂模型自我纠正",
+    "sourceDoc": "internal/core/agent.go"
+  },
+  {
+    "id": "eval_045",
+    "type": "qa",
+    "question": "配置热更新为什么不直接重启？",
+    "groundTruth": "重启会打断在跑的 ReAct 循环",
+    "sourceDoc": "internal/config/config.go"
+  },
+  {
+    "id": "eval_046",
+    "type": "qa",
+    "question": "引用计数怎么保证不丢请求？",
+    "groundTruth": "旧实例在途请求归零后才下线",
+    "sourceDoc": "internal/config/config.go"
+  },
+  {
+    "id": "eval_047",
+    "type": "qa",
+    "question": "etcd Watch 单独够不够？",
+    "groundTruth": "不够，会打断在跑请求，需配合引用计数",
+    "sourceDoc": "internal/config/config.go"
+  },
+  {
+    "id": "eval_048",
+    "type": "qa",
+    "question": "stdio 和 HTTP 传输什么场景用？",
+    "groundTruth": "stdio 本地工具，HTTP 远程 MCP server",
+    "sourceDoc": "internal/mcp/stdio.go"
+  },
+  {
+    "id": "eval_049",
+    "type": "qa",
+    "question": "MCP 适配层最难的是什么？",
+    "groundTruth": "工具 schema 不一致、超时与错误码归一",
+    "sourceDoc": "internal/mcp/adapter.go"
+  },
+  {
+    "id": "eval_050",
+    "type": "qa",
+    "question": "Fixed 切分的问题是什么？",
+    "groundTruth": "可能切断语义，检索匹配不精准",
+    "sourceDoc": "internal/rag/splitter.go"
+  },
+  {
+    "id": "eval_051",
+    "type": "qa",
+    "question": "Semantic 切分基于什么？",
+    "groundTruth": "句子边界（. ! ? 换行）",
+    "sourceDoc": "internal/rag/splitter.go"
+  },
+  {
+    "id": "eval_052",
+    "type": "qa",
+    "question": "Recursive 的 overlap 作用？",
+    "groundTruth": "保留边界上下文，避免切断丢信息",
+    "sourceDoc": "internal/rag/splitter.go"
+  },
+  {
+    "id": "eval_053",
+    "type": "qa",
+    "question": "为什么自建评估集而不是用公司数据？",
+    "groundTruth": "公司数据不能开源，公开集可复现可审计",
+    "sourceDoc": "docs/02-design-decisions.md"
+  },
+  {
+    "id": "eval_054",
+    "type": "qa",
+    "question": "HitRate@K 的 K 取几？",
+    "groundTruth": "3",
+    "sourceDoc": "docs/03-benchmark.md"
+  },
+  {
+    "id": "eval_055",
+    "type": "qa",
+    "question": "HitRate@K 怎么算命中？",
+    "groundTruth": "前 K 条结果包含与 groundTruth 同源文档",
+    "sourceDoc": "docs/03-benchmark.md"
+  },
+  {
+    "id": "eval_056",
+    "type": "qa",
+    "question": "评测器规则优先的好处？",
+    "groundTruth": "可复现、可解释、零成本",
+    "sourceDoc": "docs/02-design-decisions.md"
+  },
+  {
+    "id": "eval_057",
+    "type": "qa",
+    "question": "LLM-as-Judge 何时启用？",
+    "groundTruth": "规则无法归因时兜底",
+    "sourceDoc": "docs/02-design-decisions.md"
+  },
+  {
+    "id": "eval_058",
+    "type": "qa",
+    "question": "为什么按能力拆池而非按 Agent？",
+    "groundTruth": "高并发的是 I/O 不是思考，分离降成本",
+    "sourceDoc": "docs/01-architecture.md"
+  },
+  {
+    "id": "eval_059",
+    "type": "qa",
+    "question": "缓存一致性怎么保证？",
+    "groundTruth": "版本号 + 变更事件失效，宁可 miss 不可脏读",
+    "sourceDoc": "docs/01-architecture.md"
+  },
+  {
+    "id": "eval_060",
+    "type": "qa",
+    "question": "Trace 按什么分表？",
+    "groundTruth": "按月分表 + 冷热分离",
+    "sourceDoc": "docs/01-architecture.md"
+  },
+  {
+    "id": "eval_061",
+    "type": "qa",
+    "question": "评测任务为什么幂等？",
+    "groundTruth": "重试不重复副作用，避免污染数据",
+    "sourceDoc": "docs/01-architecture.md"
+  },
+  {
+    "id": "eval_062",
+    "type": "qa",
+    "question": "Agent 健壮性的三点是什么？",
+    "groundTruth": "迭代上限、context 贯穿、失败回喂不崩",
+    "sourceDoc": "internal/core/agent.go"
+  },
+  {
+    "id": "eval_063",
+    "type": "synthesis",
+    "question": "ReAct 循环 + 引用计数热更新如何配合？",
+    "groundTruth": "热更新保证 ReAct 在跑任务不被打断",
+    "sourceDoc": "docs/01-architecture.md"
+  },
+  {
+    "id": "eval_064",
+    "type": "synthesis",
+    "question": "评测闭环 + 热更新如何咬合？",
+    "groundTruth": "评测通过的优化经热更新灰度生效",
+    "sourceDoc": "docs/01-architecture.md"
+  },
+  {
+    "id": "eval_065",
+    "type": "synthesis",
+    "question": "多 Agent 池 + 网关链如何协作？",
+    "groundTruth": "Agent 间调用走同一网关治理链",
+    "sourceDoc": "docs/01-architecture.md"
+  },
+  {
+    "id": "eval_066",
+    "type": "synthesis",
+    "question": "RAG 评测 + 自进化闭环的关系？",
+    "groundTruth": "RAG 是闭环的第一个优化对象",
+    "sourceDoc": "docs/01-architecture.md"
+  },
+  {
+    "id": "eval_067",
+    "type": "synthesis",
+    "question": "请求放大效应 + 并发池的关系？",
+    "groundTruth": "并发池控制放大后的下游压力",
+    "sourceDoc": "docs/02-design-decisions.md"
+  },
+  {
+    "id": "eval_068",
+    "type": "synthesis",
+    "question": "预测式归因 + 闭环的关系？",
+    "groundTruth": "预测验证驱动逐次优化归因",
+    "sourceDoc": "docs/02-design-decisions.md"
+  },
+  {
+    "id": "eval_069",
+    "type": "synthesis",
+    "question": "parent-child + 缓存如何配合？",
+    "groundTruth": "检索小块缓存精准、注入父块完整",
+    "sourceDoc": "internal/rag/splitter.go"
+  },
+  {
+    "id": "eval_070",
+    "type": "synthesis",
+    "question": "Trace + Kafka + 评测的关系？",
+    "groundTruth": "Trace 经 Kafka 异步落评测，不阻塞主链",
+    "sourceDoc": "docs/01-architecture.md"
+  },
+  {
+    "id": "eval_071",
+    "type": "synthesis",
+    "question": "Factory/Registry + 热更新的关系？",
+    "groundTruth": "Registry 是热更新的承载替换点",
+    "sourceDoc": "internal/config/config.go"
+  },
+  {
+    "id": "eval_072",
+    "type": "synthesis",
+    "question": "MCP + 统一 Tool 接口的关系？",
+    "groundTruth": "MCP 适配层把远程工具收敛为统一 Tool",
+    "sourceDoc": "internal/mcp/adapter.go"
+  },
+  {
+    "id": "eval_073",
+    "type": "synthesis",
+    "question": "Executor 池 + 工具调用的关系？",
+    "groundTruth": "Executor 承载大量工具 I/O 横向扩",
+    "sourceDoc": "docs/01-architecture.md"
+  },
+  {
+    "id": "eval_074",
+    "type": "synthesis",
+    "question": "Verifier + 敏感操作的关系？",
+    "groundTruth": "Verifier 拦截敏感操作不靠模型自觉",
+    "sourceDoc": "docs/01-architecture.md"
+  },
+  {
+    "id": "eval_075",
+    "type": "synthesis",
+    "question": "Drain + Reload 的协作？",
+    "groundTruth": "Reload 换新、Drain 等旧归零",
+    "sourceDoc": "internal/config/config.go"
+  },
+  {
+    "id": "eval_076",
+    "type": "synthesis",
+    "question": "singleflight + 多级缓存的关系？",
+    "groundTruth": "互斥重建防多 worker 同时算同 key",
+    "sourceDoc": "docs/02-design-decisions.md"
+  },
+  {
+    "id": "eval_077",
+    "type": "synthesis",
+    "question": "评测门禁 + 灰度的关系？",
+    "groundTruth": "门禁通过才灰度上线，防回归",
+    "sourceDoc": "docs/01-architecture.md"
+  },
+  {
+    "id": "eval_078",
+    "type": "synthesis",
+    "question": "bad case 池 + 优化任务的关系？",
+    "groundTruth": "bad case 归因产出优化 diff",
+    "sourceDoc": "docs/01-architecture.md"
+  },
+  {
+    "id": "eval_079",
+    "type": "security",
+    "question": "Prompt 注入检测在哪个层？",
+    "groundTruth": "网关 Filter Chain",
+    "sourceDoc": "docs/01-architecture.md"
+  },
+  {
+    "id": "eval_080",
+    "type": "security",
+    "question": "限流分哪两级？",
+    "groundTruth": "全局 + 租户",
+    "sourceDoc": "docs/01-architecture.md"
+  }
+]
