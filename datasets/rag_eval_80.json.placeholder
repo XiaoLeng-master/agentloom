@@ -1,0 +1,1 @@
+{"_note":"自建 80 条标注评估集，公开来源，待 D5 填充。格式：{id, question, groundTruth, sourceDoc, type}"}

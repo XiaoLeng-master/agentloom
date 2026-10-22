@@ -1,0 +1,145 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 740" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif">
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#5f6368"/>
+    </marker>
+    <marker id="arrR" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#ea4335"/>
+    </marker>
+  </defs>
+
+  <!-- background -->
+  <rect width="960" height="740" fill="#ffffff"/>
+
+  <!-- title -->
+  <text x="480" y="34" text-anchor="middle" font-size="20" font-weight="700" fill="#202124">agentloom · 多 Agent 运行时 + 自进化评测闭环</text>
+  <text x="480" y="56" text-anchor="middle" font-size="12" fill="#5f6368">Agent 是决策层，后端基础设施是执行层与神经层</text>
+
+  <!-- ============ 控制面 ============ -->
+  <rect x="320" y="78" width="320" height="46" rx="8" fill="#e8f0fe" stroke="#1a73e8" stroke-width="1.5"/>
+  <text x="480" y="97" text-anchor="middle" font-size="13" font-weight="700" fill="#1a73e8">网关 Filter Chain</text>
+  <text x="480" y="114" text-anchor="middle" font-size="11" fill="#202124">API Key 认证 · Prompt 注入检测 · 全局/租户两级限流</text>
+
+  <rect x="320" y="140" width="320" height="46" rx="8" fill="#e8f0fe" stroke="#1a73e8" stroke-width="1.5"/>
+  <text x="480" y="159" text-anchor="middle" font-size="13" font-weight="700" fill="#1a73e8">控制面 · Router / Orchestrator</text>
+  <text x="480" y="176" text-anchor="middle" font-size="11" fill="#202124">任务拆解 · 优先级调度 · 租户配额</text>
+
+  <!-- arrow gateway->control -->
+  <line x1="480" y1="124" x2="480" y2="138" stroke="#5f6368" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- ============ 执行面 ============ -->
+  <text x="40" y="214" font-size="12" font-weight="700" fill="#34a853">执行面 · 按能力拆池</text>
+  <text x="180" y="214" font-size="10" fill="#5f6368">（真正高并发的不是思考，是调工具 / 写回系统）</text>
+
+  <rect x="40"  y="226" width="270" height="86" rx="8" fill="#e6f4ea" stroke="#34a853" stroke-width="1.5"/>
+  <text x="175" y="248" text-anchor="middle" font-size="13" font-weight="700" fill="#34a853">Planner 池</text>
+  <text x="175" y="268" text-anchor="middle" font-size="11" fill="#202124">贵模型 · 少而精</text>
+  <text x="175" y="286" text-anchor="middle" font-size="11" fill="#202124">规划 / 任务拆解</text>
+  <text x="175" y="304" text-anchor="middle" font-size="10" fill="#5f6368">实例少，不横向扩</text>
+
+  <rect x="345" y="226" width="270" height="86" rx="8" fill="#e6f4ea" stroke="#34a853" stroke-width="1.5"/>
+  <text x="480" y="248" text-anchor="middle" font-size="13" font-weight="700" fill="#34a853">Executor 池</text>
+  <text x="480" y="268" text-anchor="middle" font-size="11" fill="#202124">平价模型 · 横向扩</text>
+  <text x="480" y="286" text-anchor="middle" font-size="11" fill="#202124">工具调用 / 写回系统</text>
+  <text x="480" y="304" text-anchor="middle" font-size="10" fill="#5f6368">高并发承载层</text>
+
+  <rect x="650" y="226" width="270" height="86" rx="8" fill="#e6f4ea" stroke="#34a853" stroke-width="1.5"/>
+  <text x="785" y="248" text-anchor="middle" font-size="13" font-weight="700" fill="#34a853">Verifier 池</text>
+  <text x="785" y="268" text-anchor="middle" font-size="11" fill="#202124">规则 + 小模型</text>
+  <text x="785" y="286" text-anchor="middle" font-size="11" fill="#202124">校验 / 敏感操作拦截</text>
+  <text x="785" y="304" text-anchor="middle" font-size="10" fill="#5f6368">便宜可扩，门禁闸</text>
+
+  <!-- control -> three pools -->
+  <line x1="480" y1="186" x2="175" y2="224" stroke="#5f6368" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="480" y1="186" x2="480" y2="224" stroke="#5f6368" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="480" y1="186" x2="785" y2="224" stroke="#5f6368" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- ============ 记忆面 ============ -->
+  <text x="40" y="340" font-size="12" font-weight="700" fill="#f9ab00">记忆面</text>
+
+  <rect x="40"  y="352" width="270" height="74" rx="8" fill="#fef7e0" stroke="#f9ab00" stroke-width="1.5"/>
+  <text x="175" y="372" text-anchor="middle" font-size="12" font-weight="700" fill="#b07000">会话状态</text>
+  <text x="175" y="392" text-anchor="middle" font-size="11" fill="#202124">Redis + 本地两级</text>
+  <text x="175" y="410" text-anchor="middle" font-size="11" fill="#202124">LaneLock 会话内串行</text>
+
+  <rect x="345" y="352" width="270" height="74" rx="8" fill="#fef7e0" stroke="#f9ab00" stroke-width="1.5"/>
+  <text x="480" y="372" text-anchor="middle" font-size="12" font-weight="700" fill="#b07000">向量库 · Milvus</text>
+  <text x="480" y="392" text-anchor="middle" font-size="11" fill="#202124">Top-K 检索 · 增量更新</text>
+  <text x="480" y="410" text-anchor="middle" font-size="11" fill="#202124">4 种切分策略可插拔</text>
+
+  <rect x="650" y="352" width="270" height="74" rx="8" fill="#fef7e0" stroke="#f9ab00" stroke-width="1.5"/>
+  <text x="785" y="372" text-anchor="middle" font-size="12" font-weight="700" fill="#b07000">多级缓存</text>
+  <text x="785" y="392" text-anchor="middle" font-size="11" fill="#202124">local LRU + Redis</text>
+  <text x="785" y="410" text-anchor="middle" font-size="11" fill="#202124">singleflight 防击穿</text>
+
+  <!-- executor -> memory arrows -->
+  <line x1="175" y1="312" x2="175" y2="350" stroke="#5f6368" stroke-width="1.2" marker-end="url(#arr)" stroke-dasharray="4 3"/>
+  <line x1="480" y1="312" x2="480" y2="350" stroke="#5f6368" stroke-width="1.2" marker-end="url(#arr)" stroke-dasharray="4 3"/>
+  <line x1="785" y1="312" x2="785" y2="350" stroke="#5f6368" stroke-width="1.2" marker-end="url(#arr)" stroke-dasharray="4 3"/>
+
+  <!-- ============ 观测面 / 自进化闭环 ============ -->
+  <text x="40" y="452" font-size="12" font-weight="700" fill="#ea4335">观测面 · 自进化闭环</text>
+  <text x="170" y="452" font-size="10" fill="#5f6368">（每一环都有后端技术支撑，无一处堆栈）</text>
+
+  <g font-size="10" fill="#202124">
+    <rect x="40"  y="464" width="120" height="46" rx="6" fill="#fce8e6" stroke="#ea4335" stroke-width="1.3"/>
+    <text x="100" y="482" text-anchor="middle" font-weight="600">① Trace 采集</text>
+    <text x="100" y="498" text-anchor="middle" font-size="9" fill="#5f6368">工具/LLM/分支</text>
+
+    <rect x="180" y="464" width="120" height="46" rx="6" fill="#fce8e6" stroke="#ea4335" stroke-width="1.3"/>
+    <text x="240" y="482" text-anchor="middle" font-weight="600">② Kafka 削峰</text>
+    <text x="240" y="498" text-anchor="middle" font-size="9" fill="#5f6368">异步 · 可回放</text>
+
+    <rect x="320" y="464" width="120" height="46" rx="6" fill="#fce8e6" stroke="#ea4335" stroke-width="1.3"/>
+    <text x="380" y="482" text-anchor="middle" font-weight="600">③ 批量评测</text>
+    <text x="380" y="498" text-anchor="middle" font-size="9" fill="#5f6368">62+8 回归集</text>
+
+    <rect x="460" y="464" width="120" height="46" rx="6" fill="#fce8e6" stroke="#ea4335" stroke-width="1.3"/>
+    <text x="520" y="482" text-anchor="middle" font-weight="600">④ 失败归因</text>
+    <text x="520" y="498" text-anchor="middle" font-size="9" fill="#5f6368">规则优先+Judge</text>
+
+    <rect x="600" y="464" width="120" height="46" rx="6" fill="#fce8e6" stroke="#ea4335" stroke-width="1.3"/>
+    <text x="660" y="482" text-anchor="middle" font-weight="600">⑤ 优化任务</text>
+    <text x="660" y="498" text-anchor="middle" font-size="9" fill="#5f6368">Prompt/切分 diff</text>
+
+    <rect x="740" y="464" width="120" height="46" rx="6" fill="#fce8e6" stroke="#ea4335" stroke-width="1.3"/>
+    <text x="800" y="482" text-anchor="middle" font-weight="600">⑥ 复测门禁</text>
+    <text x="800" y="498" text-anchor="middle" font-size="9" fill="#5f6368">同数据集同 case</text>
+  </g>
+
+  <!-- pipeline arrows -->
+  <g stroke="#ea4335" stroke-width="1.2" marker-end="url(#arrR)">
+    <line x1="160" y1="487" x2="178" y2="487"/>
+    <line x1="300" y1="487" x2="318" y2="487"/>
+    <line x1="440" y1="487" x2="458" y2="487"/>
+    <line x1="580" y1="487" x2="598" y2="487"/>
+    <line x1="720" y1="487" x2="738" y2="487"/>
+  </g>
+
+  <!-- etcd 热更新 box (闭环出口) -->
+  <rect x="740" y="534" width="120" height="46" rx="6" fill="#e8f0fe" stroke="#1a73e8" stroke-width="1.5"/>
+  <text x="800" y="553" text-anchor="middle" font-size="11" font-weight="700" fill="#1a73e8">⑦ etcd 热更新</text>
+  <text x="800" y="569" text-anchor="middle" font-size="9" fill="#5f6368">灰度生效</text>
+
+  <line x1="800" y1="510" x2="800" y2="532" stroke="#ea4335" stroke-width="1.2" marker-end="url(#arrR)"/>
+
+  <!-- 闭环 dashed return arrow: 热更新 -> 控制面 -->
+  <path d="M800,534 C900,470 900,300 860,250 C840,225 700,160 642,160" fill="none" stroke="#1a73e8" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#arr)"/>
+  <text x="908" y="380" text-anchor="middle" font-size="10" fill="#1a73e8" font-weight="600">闭环</text>
+  <text x="908" y="394" text-anchor="middle" font-size="9" fill="#5f6368">优化结果灰度生效</text>
+
+  <!-- ============ 后端底座 ============ -->
+  <rect x="40" y="600" width="880" height="56" rx="8" fill="#f3e8fd" stroke="#a142f4" stroke-width="1.5"/>
+  <text x="60" y="622" font-size="12" font-weight="700" fill="#8430ce">后端底座 · 横切所有面</text>
+  <text x="60" y="642" font-size="11" fill="#202124">并发池(worker pool + 信号量) · MQ 削峰 + DLQ · Trace 按月分表 · 评测幂等消费 · 缓存一致性(版本号 + 事件驱动失效)</text>
+
+  <!-- legend -->
+  <g font-size="10" fill="#5f6368">
+    <rect x="40"  y="676" width="14" height="10" fill="#e8f0fe" stroke="#1a73e8"/><text x="60" y="685">控制面</text>
+    <rect x="130" y="676" width="14" height="10" fill="#e6f4ea" stroke="#34a853"/><text x="150" y="685">执行面</text>
+    <rect x="220" y="676" width="14" height="10" fill="#fef7e0" stroke="#f9ab00"/><text x="240" y="685">记忆面</text>
+    <rect x="310" y="676" width="14" height="10" fill="#fce8e6" stroke="#ea4335"/><text x="330" y="685">观测面/闭环</text>
+    <rect x="430" y="676" width="14" height="10" fill="#f3e8fd" stroke="#a142f4"/><text x="450" y="685">后端底座</text>
+    <text x="560" y="685">━━ 实时调用    ┄┄ 闭环回流</text>
+  </g>
+</svg>
