@@ -107,7 +107,7 @@ func NewWithModels(docs []rag.Document, models map[string]core.LLMClient) *App {
 	runtime := orchestrator.NewOrchestrator(1)
 	runtime.AddAgent(orchestrator.RolePlanner, core.NewAgent("planner", "Return a JSON array of subtasks with id and input fields. No markdown.", selectModel("planner"), nil, 1))
 	runtime.AddAgent(orchestrator.RoleExecutor, core.NewAgent("executor", "Use search_docs for relevant evidence, then answer with its source.", selectModel("executor"), []core.Tool{searchTool{retrievers}}, 2))
-	runtime.AddAgent(orchestrator.RoleVerifier, core.NewAgent("verifier", "Return JSON with task_id and pass fields. Check the execution result. No markdown.", selectModel("verifier"), nil, 1))
+	runtime.AddAgent(orchestrator.RoleVerifier, core.NewAgent("verifier", "Return JSON with task_id and pass fields. Check the execution result. No markdown.", demoLLM{role: "verifier"}, nil, 1))
 	return &App{gate: gateway.New(localAuth{}, gateway.InjectionFilter{}, gateway.NewRateLimitFilter(60, time.Minute)), runtime: runtime, traces: map[string]Trace{}, modelMode: models != nil}
 }
 

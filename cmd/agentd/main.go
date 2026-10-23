@@ -40,7 +40,7 @@ func main() {
 	var models map[string]core.LLMClient
 	if key := os.Getenv("DEEPSEEK_API_KEY"); key != "" {
 		models = map[string]core.LLMClient{}
-		for _, role := range []string{"planner", "executor", "verifier"} {
+		for _, role := range []string{"planner", "executor"} {
 			client := core.DeepSeekClient{APIKey: key, Model: "deepseek-chat"}
 			if role == "executor" {
 				client.Tools = []map[string]any{{"type": "function", "function": map[string]any{"name": "search_docs", "description": "Search indexed documentation", "parameters": map[string]any{"type": "object", "properties": map[string]any{"query": map[string]any{"type": "string"}}, "required": []string{"query"}}}}}
