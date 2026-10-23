@@ -69,9 +69,10 @@ var ErrDuplicateMount = errors.New("plugin: already mounted, use Reload")
 // the zero-interrupt swap the harness relies on to ship an optimization
 // without breaking in-flight turns.
 type Handle struct {
-	plugin Plugin
-	refs   *int32
-	stale  *atomic.Bool
+	plugin   Plugin
+	refs     *int32
+	stale    *atomic.Bool
+	released atomic.Bool
 }
 
 // Plugin returns the plugin this handle was acquired against.
@@ -89,7 +90,7 @@ func (h *Handle) IsStale() bool {
 
 // Release decrements the refcount. Always defer it once per Acquire.
 func (h *Handle) Release() {
-	if h.refs != nil {
+	if h.refs != nil && h.released.CompareAndSwap(false, true) {
 		atomic.AddInt32(h.refs, -1)
 	}
 }
@@ -141,8 +142,8 @@ func (l *Lifecycle) Mount(ctx context.Context, p Plugin) error {
 // instead of tearing it down under a running turn.
 func (l *Lifecycle) Acquire(name string) (*Handle, error) {
 	l.mu.RLock()
+	defer l.mu.RUnlock()
 	e, ok := l.active[name]
-	l.mu.RUnlock()
 	if !ok {
 		return nil, fmt.Errorf("%w: %s", ErrUnknownPlugin, name)
 	}
@@ -170,6 +171,12 @@ func (l *Lifecycle) Reload(ctx context.Context, newP Plugin) (inFlight int, err 
 		return 0, fmt.Errorf("plugin reload %q: init: %w", name, err)
 	}
 	l.mu.Lock()
+	old, ok = l.active[name]
+	if !ok {
+		l.mu.Unlock()
+		_ = newP.Dispose()
+		return 0, fmt.Errorf("%w: %s (unmounted during init)", ErrUnknownPlugin, name)
+	}
 	version := 1
 	if ok {
 		version = old.version + 1
@@ -179,11 +186,12 @@ func (l *Lifecycle) Reload(ctx context.Context, newP Plugin) (inFlight int, err 
 	if ok {
 		l.draining[name] = append(l.draining[name], old)
 	}
-	l.mu.Unlock()
 	if ok {
 		old.stale.Store(true)
+		l.mu.Unlock()
 		return int(atomic.LoadInt32(&old.refs)), nil
 	}
+	l.mu.Unlock()
 	return 0, nil
 }
 
@@ -196,10 +204,10 @@ func (l *Lifecycle) Reload(ctx context.Context, newP Plugin) (inFlight int, err 
 func (l *Lifecycle) Dispose(name string, timeout time.Duration) (remaining int) {
 	deadline := time.Now().Add(timeout)
 	for {
-		l.mu.RLock()
+		l.mu.Lock()
 		stale := l.draining[name]
-		l.mu.RUnlock()
 		if len(stale) == 0 {
+			l.mu.Unlock()
 			return 0
 		}
 		max := 0
@@ -210,7 +218,6 @@ func (l *Lifecycle) Dispose(name string, timeout time.Duration) (remaining int) 
 			}
 		}
 		if max == 0 {
-			l.mu.Lock()
 			toFinalize := l.draining[name]
 			l.draining[name] = nil
 			l.mu.Unlock()
@@ -219,6 +226,7 @@ func (l *Lifecycle) Dispose(name string, timeout time.Duration) (remaining int) 
 			}
 			return 0
 		}
+		l.mu.Unlock()
 		if time.Now().After(deadline) {
 			return max
 		}
