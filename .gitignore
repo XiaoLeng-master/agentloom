@@ -25,3 +25,5 @@ config/local.*
 # Output / traces (gitignore, but keep datasets)
 output/
 traces/
+.agentloom/
+web/node_modules/

@@ -59,6 +59,7 @@ type App struct {
 	modelMode  bool
 	manager    *config.Manager
 	corpusPath string
+	history    *evolution.History
 }
 
 // WithConfigManager makes each request acquire one immutable configuration version.
@@ -66,6 +67,12 @@ func (a *App) WithConfigManager(manager *config.Manager) *App { a.manager = mana
 
 // WithCorpusPath locates the public evaluation set for an offline experiment.
 func (a *App) WithCorpusPath(path string) *App { a.corpusPath = path; return a }
+
+// WithExperimentHistory enables readback of local experiment evidence.
+func (a *App) WithExperimentHistory(dir string) *App {
+	a.history = &evolution.History{Dir: dir}
+	return a
+}
 
 // WithTraceStore enables persistent traces; New remains dependency-free for the local demo.
 func (a *App) WithTraceStore(store TraceStore) *App {
@@ -131,6 +138,8 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/chat", a.chat)
 	mux.HandleFunc("GET /v1/traces/{id}", a.trace)
 	mux.HandleFunc("POST /v1/evolve", a.evolve)
+	mux.HandleFunc("GET /v1/evolutions", a.evolutions)
+	mux.HandleFunc("GET /v1/evolutions/{id}", a.experiment)
 	mux.HandleFunc("GET /health/live", func(w http.ResponseWriter, r *http.Request) { write(w, 200, map[string]string{"status": "ok"}) })
 	return mux
 }
@@ -167,10 +176,57 @@ func (a *App) evolve(w http.ResponseWriter, r *http.Request) {
 	prediction := evolution.Prediction{ExpectedHitRateDeltaMin: 0.10, ExpectedHitRateDeltaMax: 0.25}
 	before, after, decision, err := evolution.ImproveRetrieval(a.manager, "kb-agent", cfg, cases, docs, hash,
 		rag.FixedSplitter{Size: 40}, rag.RecursiveSplitter{Size: 60, Overlap: 10}, prediction)
-	result := map[string]any{"before": before, "after": after, "failures": evolution.DiagnoseRetrieval(before, after),
-		"prediction": prediction, "actual_delta": after.HitRate - before.HitRate, "decision": decision}
+	result, recordErr := evolution.NewExperiment(before, after, prediction, decision)
+	if recordErr != nil {
+		write(w, 500, map[string]string{"error": "experiment id unavailable"})
+		return
+	}
+	if a.history != nil {
+		if saveErr := a.history.Save(result); saveErr != nil {
+			write(w, 503, map[string]any{"error": "experiment evidence not saved", "result": result})
+			return
+		}
+	}
 	if err != nil {
 		write(w, 409, result)
+		return
+	}
+	write(w, 200, result)
+}
+
+func (a *App) evolutions(w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get("Authorization") != "Bearer local-demo" {
+		write(w, 403, map[string]string{"error": "invalid token"})
+		return
+	}
+	if a.history == nil {
+		write(w, 503, map[string]string{"error": "experiment history unavailable"})
+		return
+	}
+	results, err := a.history.List()
+	if err != nil {
+		write(w, 503, map[string]string{"error": "experiment history unavailable"})
+		return
+	}
+	write(w, 200, results)
+}
+
+func (a *App) experiment(w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get("Authorization") != "Bearer local-demo" {
+		write(w, 403, map[string]string{"error": "invalid token"})
+		return
+	}
+	if a.history == nil {
+		write(w, 503, map[string]string{"error": "experiment history unavailable"})
+		return
+	}
+	result, err := a.history.Get(r.PathValue("id"))
+	if errors.Is(err, evolution.ErrExperimentNotFound) {
+		write(w, 404, map[string]string{"error": "experiment not found"})
+		return
+	}
+	if err != nil {
+		write(w, 503, map[string]string{"error": "experiment history unavailable"})
 		return
 	}
 	write(w, 200, result)

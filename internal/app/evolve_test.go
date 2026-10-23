@@ -26,7 +26,7 @@ func TestExperimentChangesSubsequentTraceVersion(t *testing.T) {
 	}
 	mgr := config.NewManager()
 	mgr.Register("kb-agent", config.Config{Name: "kb-agent", SystemPrompt: "demo", ChunkStrategy: "fixed"})
-	a := New([]rag.Document{{Source: "guide", Text: "agentloom planner executor verifier guide"}}).WithConfigManager(mgr).WithCorpusPath(dataset)
+	a := New([]rag.Document{{Source: "guide", Text: "agentloom planner executor verifier guide"}}).WithConfigManager(mgr).WithCorpusPath(dataset).WithExperimentHistory(filepath.Join(dir, "history"))
 	chat := func() Trace {
 		req := httptest.NewRequest(http.MethodPost, "/v1/chat", strings.NewReader(`{"message":"planner"}`))
 		req.Header.Set("Authorization", "Bearer local-demo")
@@ -53,6 +53,20 @@ func TestExperimentChangesSubsequentTraceVersion(t *testing.T) {
 	a.Handler().ServeHTTP(rec, req)
 	if rec.Code != 200 {
 		t.Fatalf("evolve %d: %s", rec.Code, rec.Body.String())
+	}
+	var experiment struct {
+		ID            string `json:"id"`
+		AnswerQuality string `json:"answer_quality"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &experiment); err != nil || experiment.ID == "" || experiment.AnswerQuality != "not_evaluated" {
+		t.Fatalf("experiment=%+v err=%v", experiment, err)
+	}
+	get := httptest.NewRequest(http.MethodGet, "/v1/evolutions/"+experiment.ID, nil)
+	get.Header.Set("Authorization", "Bearer local-demo")
+	readback := httptest.NewRecorder()
+	a.Handler().ServeHTTP(readback, get)
+	if readback.Code != 200 || !strings.Contains(readback.Body.String(), experiment.ID) {
+		t.Fatalf("readback %d: %s", readback.Code, readback.Body.String())
 	}
 	after := chat()
 	if before.ConfigVersion != 1 || before.ChunkStrategy != "fixed" || after.ConfigVersion != 2 || after.ChunkStrategy != "recursive" {

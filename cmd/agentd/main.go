@@ -21,6 +21,7 @@ import (
 	"github.com/XiaoLeng-master/agentloom/internal/config"
 	"github.com/XiaoLeng-master/agentloom/internal/core"
 	"github.com/XiaoLeng-master/agentloom/internal/rag"
+	"github.com/XiaoLeng-master/agentloom/web"
 )
 
 func publicDocs(root string) ([]rag.Document, error) {
@@ -67,7 +68,7 @@ func main() {
 		log.Fatalf("load public docs: %v", err)
 	}
 	local := app.NewWithModels(docs, models)
-	local.WithConfigManager(mgr)
+	local.WithConfigManager(mgr).WithExperimentHistory(".agentloom/evolutions")
 	if redisAddr := os.Getenv("AGENTLOOM_REDIS_ADDR"); redisAddr != "" {
 		store := app.NewRedisTraceStore(redisAddr, 24*time.Hour)
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -87,13 +88,7 @@ func main() {
 			"agents": mgr.Active(),
 		})
 	})
-	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]any{
-			"service": "agentloom",
-			"repo":    "github.com/XiaoLeng-master/agentloom",
-			"agents":  mgr.Active(),
-		})
-	})
+	mux.Handle("/", web.Handler())
 
 	srv := &http.Server{Addr: *addr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	go func() {
