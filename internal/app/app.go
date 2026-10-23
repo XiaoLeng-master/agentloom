@@ -11,10 +11,12 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/XiaoLeng-master/agentloom/internal/core"
 	"github.com/XiaoLeng-master/agentloom/internal/gateway"
+	"github.com/XiaoLeng-master/agentloom/internal/infra"
 	"github.com/XiaoLeng-master/agentloom/internal/orchestrator"
 	"github.com/XiaoLeng-master/agentloom/internal/rag"
 )
@@ -32,12 +34,43 @@ type App struct {
 	mu      sync.RWMutex
 	traces  map[string]Trace
 	store   TraceStore
+	queue   *infra.ToyQueue
+	worker  chan struct{}
+	failed  atomic.Int64
 }
 
 // WithTraceStore enables persistent traces; New remains dependency-free for the local demo.
 func (a *App) WithTraceStore(store TraceStore) *App {
 	a.store = store
+	a.queue = infra.NewToyQueue(256)
+	a.worker = make(chan struct{})
+	go func() {
+		defer close(a.worker)
+		_ = a.queue.Consume(context.Background(), 16, func(batch [][]byte) {
+			for _, event := range batch {
+				var trace Trace
+				if err := json.Unmarshal(event, &trace); err != nil {
+					a.failed.Add(1)
+					continue
+				}
+				ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+				err := store.Save(ctx, trace)
+				cancel()
+				if err != nil {
+					a.failed.Add(1)
+				}
+			}
+		})
+	}()
 	return a
+}
+
+// Close drains accepted trace events before the backing store is closed.
+func (a *App) Close() {
+	if a.queue != nil {
+		a.queue.Close()
+		<-a.worker
+	}
 }
 
 func New(docs []rag.Document) *App {
@@ -84,15 +117,12 @@ func (a *App) chat(w http.ResponseWriter, r *http.Request) {
 	}
 	id := hex.EncodeToString(bytes[:])
 	trace := Trace{ID: id, Query: input.Message, Answer: answer, Contracts: contracts, CreatedAt: time.Now().UTC()}
-	if a.store != nil {
-		if err := a.store.Save(r.Context(), trace); err != nil {
-			write(w, 503, map[string]string{"error": "trace storage unavailable"})
-			return
-		}
-	} else {
-		a.mu.Lock()
-		a.traces[id] = trace
-		a.mu.Unlock()
+	a.mu.Lock()
+	a.traces[id] = trace
+	a.mu.Unlock()
+	if a.queue != nil {
+		data, _ := json.Marshal(trace)
+		_ = a.queue.Push(data)
 	}
 	write(w, 200, map[string]any{"reply": answer, "trace_id": id, "verification": "passed", "mode": "local-demo"})
 }
@@ -104,16 +134,14 @@ func (a *App) trace(w http.ResponseWriter, r *http.Request) {
 	}
 	var trace Trace
 	var err error
-	if a.store != nil {
+	a.mu.RLock()
+	var ok bool
+	trace, ok = a.traces[r.PathValue("id")]
+	a.mu.RUnlock()
+	if !ok && a.store != nil {
 		trace, err = a.store.Get(r.Context(), r.PathValue("id"))
-	} else {
-		a.mu.RLock()
-		var ok bool
-		trace, ok = a.traces[r.PathValue("id")]
-		a.mu.RUnlock()
-		if !ok {
-			err = ErrTraceNotFound
-		}
+	} else if !ok {
+		err = ErrTraceNotFound
 	}
 	if errors.Is(err, ErrTraceNotFound) {
 		write(w, 404, map[string]string{"error": "trace not found"})

@@ -48,6 +48,7 @@ func main() {
 		local.WithTraceStore(store)
 	}
 	mux.Handle("/v1/", local.Handler())
+	defer local.Close()
 	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"status": "ok",

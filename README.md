@@ -76,7 +76,7 @@ curl -H 'Authorization: Bearer local-demo' -H 'Content-Type: application/json' \
 curl -H 'Authorization: Bearer local-demo' localhost:8080/v1/traces/<trace_id>
 ```
 
-演示链路经过本地网关、Planner、Executor 的 RAG Tool 和 Verifier。默认 Trace 暂存进程内；如需跨进程保留演示 Trace，可执行 `docker compose up -d redis`，再设置 `AGENTLOOM_REDIS_ADDR=127.0.0.1:16379` 启动服务。Redis 不可用时服务启动会报错，不会悄悄退回内存。远端 MCP、真实模型及批量评测尚未接入此入口；Kafka、etcd、Milvus 仍未落地。
+演示链路经过本地网关、Planner、Executor 的 RAG Tool 和 Verifier。Trace 在响应前写入进程内存；如需跨进程保留，可执行 `docker compose up -d redis`，再设置 `AGENTLOOM_REDIS_ADDR=127.0.0.1:16379` 启动服务。后台队列异步写 Redis，请求不等待持久化；队列满或写入失败可能丢失跨进程记录，关停时会排空已接收事件。Redis 启动检查失败会报错。远端 MCP、真实模型及批量评测尚未接入此入口；Kafka、etcd、Milvus 仍未落地。
 
 环境：
 - Go 1.22+

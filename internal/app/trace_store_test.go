@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -59,7 +60,9 @@ func TestRedisTraceSurvivesAppRecreation(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil || result.TraceID == "" {
 		t.Fatalf("invalid chat response: %s, %v", response.Body.String(), err)
 	}
+	first.Close()
 	second := New(nil).WithTraceStore(store)
+	defer second.Close()
 	get := httptest.NewRequest(http.MethodGet, "/v1/traces/"+result.TraceID, nil)
 	get.Header.Set("Authorization", "Bearer local-demo")
 	response = httptest.NewRecorder()
@@ -67,4 +70,45 @@ func TestRedisTraceSurvivesAppRecreation(t *testing.T) {
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"query":"hello"`) {
 		t.Fatalf("trace status %d: %s", response.Code, response.Body.String())
 	}
+}
+
+type blockedTraceStore struct {
+	started chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (s *blockedTraceStore) Save(_ context.Context, _ Trace) error {
+	s.once.Do(func() { close(s.started) })
+	<-s.release
+	return nil
+}
+func (s *blockedTraceStore) Get(context.Context, string) (Trace, error) {
+	return Trace{}, ErrTraceNotFound
+}
+
+func TestSlowTraceStoreDoesNotBlockChat(t *testing.T) {
+	store := &blockedTraceStore{started: make(chan struct{}), release: make(chan struct{})}
+	a := New(nil).WithTraceStore(store)
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat", strings.NewReader(`{"message":"hello"}`))
+	req.Header.Set("Authorization", "Bearer local-demo")
+	response := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() { a.Handler().ServeHTTP(response, req); close(done) }()
+	select {
+	case <-done:
+		if response.Code != http.StatusOK {
+			t.Fatalf("chat status %d", response.Code)
+		}
+	case <-time.After(time.Second):
+		close(store.release)
+		t.Fatal("chat waited for trace storage")
+	}
+	select {
+	case <-store.started:
+	case <-time.After(time.Second):
+		t.Fatal("trace worker did not start")
+	}
+	close(store.release)
+	a.Close()
 }
