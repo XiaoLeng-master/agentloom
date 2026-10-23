@@ -80,18 +80,21 @@ type Verdict struct {
 // cheap executor role can scale horizontally by adding agents; the expensive
 // planner role typically has one or two.
 type Pool struct {
+	mu     sync.RWMutex
 	role   Role
 	agents []*core.Agent
-	next    uint32
+	next   uint32
 }
 
 func newPool(role Role) *Pool { return &Pool{role: role} }
 
-func (p *Pool) add(a *core.Agent) { p.agents = append(p.agents, a) }
+func (p *Pool) add(a *core.Agent) { p.mu.Lock(); defer p.mu.Unlock(); p.agents = append(p.agents, a) }
 
 // pick returns the next Agent by round-robin. Returns nil if the pool is
 // empty — callers must handle that (e.g. a missing verifier is non-fatal).
 func (p *Pool) pick() *core.Agent {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
 	n := uint32(len(p.agents))
 	if n == 0 {
 		return nil
@@ -102,7 +105,7 @@ func (p *Pool) pick() *core.Agent {
 	return p.agents[(i+n-1)%n]
 }
 
-func (p *Pool) size() int { return len(p.agents) }
+func (p *Pool) size() int { p.mu.RLock(); defer p.mu.RUnlock(); return len(p.agents) }
 
 // Orchestrator owns the three role pools and runs one collaboration turn.
 type Orchestrator struct {
@@ -181,6 +184,7 @@ func (o *Orchestrator) Run(ctx context.Context, userQuery string) (string, []Con
 	results := make(map[string]string, len(subtasks))
 	for replan := 0; replan <= o.maxReplan; replan++ {
 		allPass := true
+		var verdicts []Verdict
 		for _, st := range subtasks {
 			exec := o.pickRole(RoleExecutor)
 			if exec == nil {
@@ -200,13 +204,20 @@ func (o *Orchestrator) Run(ctx context.Context, userQuery string) (string, []Con
 			verIn, _ := json.Marshal(ExecResult{TaskID: st.ID, Output: out})
 			verOut, err := ver.Run(ctx, string(verIn))
 			if err != nil {
-				continue
+				trace = append(trace, Contract{From: RoleVerifier, To: RolePlanner, TaskID: st.ID, Phase: PhaseVerify, Payload: err.Error()})
+				return "", trace, fmt.Errorf("%w: task %s: %w", ErrVerification, st.ID, err)
 			}
 			trace = append(trace, Contract{From: RoleVerifier, To: RolePlanner, TaskID: st.ID, Phase: PhaseVerify, Payload: verOut})
-			var vd Verdict
-			if e := json.Unmarshal([]byte(verOut), &vd); e != nil {
-				continue
+			var decoded struct {
+				TaskID string `json:"task_id"`
+				Pass   *bool  `json:"pass"`
+				Reason string `json:"reason"`
 			}
+			if e := json.Unmarshal([]byte(verOut), &decoded); e != nil || decoded.Pass == nil || decoded.TaskID != st.ID {
+				return "", trace, fmt.Errorf("%w: task %s: invalid verdict", ErrVerification, st.ID)
+			}
+			vd := Verdict{TaskID: decoded.TaskID, Pass: *decoded.Pass, Reason: decoded.Reason}
+			verdicts = append(verdicts, vd)
 			if !vd.Pass {
 				allPass = false
 			}
@@ -215,13 +226,13 @@ func (o *Orchestrator) Run(ctx context.Context, userQuery string) (string, []Con
 			break
 		}
 		if replan >= o.maxReplan {
-			break
+			return "", trace, ErrReplanExhausted
 		}
 		// Re-plan with the feedback so the planner does not repeat the same split.
-		fb, _ := json.Marshal(map[string]any{"original": userQuery, "results": results})
+		fb, _ := json.Marshal(map[string]any{"original": userQuery, "results": results, "verdicts": verdicts})
 		newSubs, newPayload, err := o.plan(ctx, o.pickRole(RolePlanner), string(fb))
 		if err != nil {
-			break
+			return "", trace, fmt.Errorf("replanner: %w", err)
 		}
 		subtasks = newSubs
 		trace = append(trace, Contract{From: RolePlanner, To: RoleExecutor, TaskID: "replan", Phase: PhasePlan, Payload: newPayload})
@@ -264,6 +275,8 @@ func summarize(subs []SubTask, results map[string]string) string {
 
 // Errors.
 var (
-	ErrNoPlanner  = errors.New("orchestrator: planner pool empty")
-	ErrNoExecutor = errors.New("orchestrator: executor pool empty")
+	ErrNoPlanner       = errors.New("orchestrator: planner pool empty")
+	ErrNoExecutor      = errors.New("orchestrator: executor pool empty")
+	ErrVerification    = errors.New("orchestrator: verification failed")
+	ErrReplanExhausted = errors.New("orchestrator: replan budget exhausted")
 )
