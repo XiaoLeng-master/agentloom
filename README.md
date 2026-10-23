@@ -66,6 +66,18 @@ curl localhost:8080/health   # {"status":"ok","agents":["kb-agent"]}
 
 > `make run` 起的 `agentd` 是最小 HTTP 表面，配置热更新 Manager 从启动即生效；Agent ReAct 循环、MCP 工具、评测闭环按模块逐步接进来。
 
+本地端到端演示（确定性演示模型、内存文档检索；不是在线 LLM 或生产知识库）：
+
+```bash
+make run
+curl -H 'Authorization: Bearer local-demo' -H 'Content-Type: application/json' \
+  -d '{"message":"planner executor"}' localhost:8080/v1/chat
+# 从返回的 trace_id 查询执行契约：
+curl -H 'Authorization: Bearer local-demo' localhost:8080/v1/traces/<trace_id>
+```
+
+演示链路经过本地网关、Planner、Executor 的 RAG Tool 和 Verifier，Trace 暂存进程内；远端 MCP、真实模型、批量评测及持久化尚未接入这个入口。
+
 环境：
 - Go 1.22+
 - （可选）Ollama + qwen2.5 / nomic-embed-text：把 `HashEmbedder` 换成真实 embedder，跑生产级 benchmark 数字；当前零依赖词法 embedder 即可复现方法论。

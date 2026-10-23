@@ -16,7 +16,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/XiaoLeng-master/agentloom/internal/app"
 	"github.com/XiaoLeng-master/agentloom/internal/config"
+	"github.com/XiaoLeng-master/agentloom/internal/rag"
 )
 
 func main() {
@@ -33,6 +35,8 @@ func main() {
 	})
 
 	mux := http.NewServeMux()
+	local := app.New([]rag.Document{{Source: "agentloom-demo", Text: "agentloom uses a planner, executor and verifier. The executor can retrieve indexed documentation. This is a local deterministic demonstration."}})
+	mux.Handle("/v1/", local.Handler())
 	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"status": "ok",
