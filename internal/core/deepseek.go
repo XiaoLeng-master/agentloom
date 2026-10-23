@@ -55,6 +55,9 @@ func (c DeepSeekClient) Complete(ctx context.Context, msgs []Message) (Message, 
 	payload := map[string]any{"model": model, "messages": items, "stream": false}
 	if len(c.Tools) > 0 {
 		payload["tools"] = c.Tools
+		if len(msgs) > 0 && msgs[len(msgs)-1].Role == RoleTool {
+			payload["tool_choice"] = "none"
+		}
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
