@@ -30,9 +30,10 @@ var ErrUnknownAgent = errors.New("config: unknown agent")
 // refcount; Release decrements it. A Reload supersedes the old entry, but the
 // old entry stays alive until its refcount drains to zero.
 type AgentHandle struct {
-	cfg   Config
-	refs  *int32       // points at the entry's refs counter
-	stale *atomic.Bool // points at the entry's stale flag
+	cfg      Config
+	refs     *int32       // points at the entry's refs counter
+	stale    *atomic.Bool // points at the entry's stale flag
+	released atomic.Bool
 }
 
 // Config returns the config this handle was acquired against.
@@ -48,7 +49,7 @@ func (h *AgentHandle) IsStale() bool {
 
 // Release decrements the refcount. Always call once per Acquire (defer it).
 func (h *AgentHandle) Release() {
-	if h.refs != nil {
+	if h.refs != nil && h.released.CompareAndSwap(false, true) {
 		atomic.AddInt32(h.refs, -1)
 	}
 }
@@ -84,8 +85,8 @@ func (m *Manager) Register(name string, cfg Config) {
 // tearing it down under running requests.
 func (m *Manager) Acquire(name string) (*AgentHandle, error) {
 	m.mu.RLock()
+	defer m.mu.RUnlock()
 	e, ok := m.active[name]
-	m.mu.RUnlock()
 	if !ok {
 		return nil, ErrUnknownAgent
 	}
@@ -108,10 +109,10 @@ func (m *Manager) Reload(name string, cfg Config) int {
 	m.active[name] = e
 	if ok {
 		m.drained[name] = append(m.drained[name], old)
+		old.stale.Store(true)
 	}
 	m.mu.Unlock()
 	if ok {
-		old.stale.Store(true)
 		return int(atomic.LoadInt32(&old.refs))
 	}
 	return 0
@@ -124,10 +125,10 @@ func (m *Manager) Reload(name string, cfg Config) int {
 func (m *Manager) Drain(name string, timeout time.Duration) int {
 	deadline := time.Now().Add(timeout)
 	for {
-		m.mu.RLock()
+		m.mu.Lock()
 		stale := m.drained[name]
-		m.mu.RUnlock()
 		if len(stale) == 0 {
+			m.mu.Unlock()
 			return 0
 		}
 		max := 0
@@ -139,11 +140,11 @@ func (m *Manager) Drain(name string, timeout time.Duration) int {
 		}
 		if max == 0 {
 			// All superseded entries drained; finalize them.
-			m.mu.Lock()
 			m.drained[name] = nil
 			m.mu.Unlock()
 			return 0
 		}
+		m.mu.Unlock()
 		if time.Now().After(deadline) {
 			return max
 		}
