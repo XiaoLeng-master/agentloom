@@ -31,7 +31,22 @@ type Trace struct {
 	CreatedAt     time.Time               `json:"created_at"`
 	ConfigVersion int                     `json:"config_version,omitempty"`
 	ChunkStrategy string                  `json:"chunk_strategy,omitempty"`
+	Retrievals    []RetrievalEvidence     `json:"retrievals,omitempty"`
 }
+
+// RetrievalEvidence records the passages actually returned to the executor.
+type RetrievalEvidence struct {
+	Query  string  `json:"query"`
+	Source string  `json:"source"`
+	Text   string  `json:"text"`
+	Score  float32 `json:"score"`
+}
+
+type retrievalLog struct {
+	mu      sync.Mutex
+	entries []RetrievalEvidence
+}
+type retrievalKey struct{}
 type App struct {
 	gate       *gateway.Gateway
 	runtime    *orchestrator.Orchestrator
@@ -106,7 +121,7 @@ func NewWithModels(docs []rag.Document, models map[string]core.LLMClient) *App {
 	}
 	runtime := orchestrator.NewOrchestrator(1)
 	runtime.AddAgent(orchestrator.RolePlanner, core.NewAgent("planner", "Return a JSON array of subtasks with id and input fields. No markdown.", selectModel("planner"), nil, 1))
-	runtime.AddAgent(orchestrator.RoleExecutor, core.NewAgent("executor", "Use search_docs for relevant evidence, then answer with its source.", selectModel("executor"), []core.Tool{searchTool{retrievers}}, 2))
+	runtime.AddAgent(orchestrator.RoleExecutor, core.NewAgent("executor", "Use search_docs once for relevant evidence. Answer the full user question concisely, cite source paths, and distinguish target architecture from implemented behavior. If evidence is insufficient, say so.", selectModel("executor"), []core.Tool{searchTool{retrievers}}, 2))
 	runtime.AddAgent(orchestrator.RoleVerifier, core.NewAgent("verifier", "Return JSON with task_id and pass fields. Check the execution result. No markdown.", demoLLM{role: "verifier"}, nil, 1))
 	return &App{gate: gateway.New(localAuth{}, gateway.InjectionFilter{}, gateway.NewRateLimitFilter(60, time.Minute)), runtime: runtime, traces: map[string]Trace{}, modelMode: models != nil}
 }
@@ -176,6 +191,8 @@ func (a *App) chat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
+	retrievals := &retrievalLog{}
+	ctx = context.WithValue(ctx, retrievalKey{}, retrievals)
 	var cfg config.Config
 	if a.manager != nil {
 		handle, err := a.manager.Acquire("kb-agent")
@@ -198,7 +215,10 @@ func (a *App) chat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := hex.EncodeToString(bytes[:])
-	trace := Trace{ID: id, Query: input.Message, Answer: answer, Contracts: contracts, CreatedAt: time.Now().UTC(), ConfigVersion: cfg.Version, ChunkStrategy: cfg.ChunkStrategy}
+	retrievals.mu.Lock()
+	evidence := append([]RetrievalEvidence(nil), retrievals.entries...)
+	retrievals.mu.Unlock()
+	trace := Trace{ID: id, Query: input.Message, Answer: answer, Contracts: contracts, CreatedAt: time.Now().UTC(), ConfigVersion: cfg.Version, ChunkStrategy: cfg.ChunkStrategy, Retrievals: evidence}
 	a.mu.Lock()
 	a.traces[id] = trace
 	a.mu.Unlock()
@@ -280,7 +300,21 @@ func (s searchTool) Call(ctx context.Context, args map[string]any) (string, erro
 	if len(results) == 0 {
 		return "no indexed documents", nil
 	}
-	return fmt.Sprintf("%s (source: %s)", results[0].Text, results[0].Source), nil
+	var parts []string
+	for _, result := range results {
+		passage := []rune(result.Text)
+		if len(passage) > 1200 {
+			passage = passage[:1200]
+		}
+		text := string(passage)
+		parts = append(parts, fmt.Sprintf("Source: %s\nContent: %s", result.Source, text))
+		if log, ok := ctx.Value(retrievalKey{}).(*retrievalLog); ok {
+			log.mu.Lock()
+			log.entries = append(log.entries, RetrievalEvidence{Query: query, Source: result.Source, Text: text, Score: result.Score})
+			log.mu.Unlock()
+		}
+	}
+	return strings.Join(parts, "\n\n"), nil
 }
 
 type demoLLM struct{ role string }

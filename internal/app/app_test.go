@@ -73,7 +73,7 @@ func TestChatTraceFlow(t *testing.T) {
 	if err := json.Unmarshal(traceRec.Body.Bytes(), &trace); err != nil {
 		t.Fatal(err)
 	}
-	if trace.ID != reply.TraceID || len(trace.Contracts) != 3 {
+	if trace.ID != reply.TraceID || len(trace.Contracts) != 3 || len(trace.Retrievals) == 0 || trace.Retrievals[0].Source != "guide" {
 		t.Fatalf("trace: %+v", trace)
 	}
 }

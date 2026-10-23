@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -21,6 +22,19 @@ import (
 	"github.com/XiaoLeng-master/agentloom/internal/core"
 	"github.com/XiaoLeng-master/agentloom/internal/rag"
 )
+
+func publicDocs(root string) ([]rag.Document, error) {
+	paths := []string{"README.md", "docs/01-architecture.md", "docs/02-design-decisions.md"}
+	docs := make([]rag.Document, 0, len(paths))
+	for _, path := range paths {
+		body, err := os.ReadFile(filepath.Join(root, path))
+		if err != nil {
+			return nil, err
+		}
+		docs = append(docs, rag.Document{Source: path, Text: string(body)})
+	}
+	return docs, nil
+}
 
 func main() {
 	addr := flag.String("addr", ":8080", "listen address")
@@ -40,7 +54,7 @@ func main() {
 	var models map[string]core.LLMClient
 	if key := os.Getenv("DEEPSEEK_API_KEY"); key != "" {
 		models = map[string]core.LLMClient{}
-		for _, role := range []string{"planner", "executor"} {
+		for _, role := range []string{"executor"} {
 			client := core.DeepSeekClient{APIKey: key, Model: "deepseek-chat"}
 			if role == "executor" {
 				client.Tools = []map[string]any{{"type": "function", "function": map[string]any{"name": "search_docs", "description": "Search indexed documentation", "parameters": map[string]any{"type": "object", "properties": map[string]any{"query": map[string]any{"type": "string"}}, "required": []string{"query"}}}}}
@@ -48,7 +62,11 @@ func main() {
 			models[role] = client
 		}
 	}
-	local := app.NewWithModels([]rag.Document{{Source: "agentloom-demo", Text: "agentloom uses a planner, executor and verifier. The executor can retrieve indexed documentation. This is a local deterministic demonstration."}}, models)
+	docs, err := publicDocs(".")
+	if err != nil {
+		log.Fatalf("load public docs: %v", err)
+	}
+	local := app.NewWithModels(docs, models)
 	local.WithConfigManager(mgr)
 	if redisAddr := os.Getenv("AGENTLOOM_REDIS_ADDR"); redisAddr != "" {
 		store := app.NewRedisTraceStore(redisAddr, 24*time.Hour)
