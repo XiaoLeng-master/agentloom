@@ -18,6 +18,7 @@ import (
 
 	"github.com/XiaoLeng-master/agentloom/internal/app"
 	"github.com/XiaoLeng-master/agentloom/internal/config"
+	"github.com/XiaoLeng-master/agentloom/internal/core"
 	"github.com/XiaoLeng-master/agentloom/internal/rag"
 )
 
@@ -35,7 +36,18 @@ func main() {
 	})
 
 	mux := http.NewServeMux()
-	local := app.New([]rag.Document{{Source: "agentloom-demo", Text: "agentloom uses a planner, executor and verifier. The executor can retrieve indexed documentation. This is a local deterministic demonstration."}})
+	var models map[string]core.LLMClient
+	if key := os.Getenv("DEEPSEEK_API_KEY"); key != "" {
+		models = map[string]core.LLMClient{}
+		for _, role := range []string{"planner", "executor", "verifier"} {
+			client := core.DeepSeekClient{APIKey: key, Model: "deepseek-chat"}
+			if role == "executor" {
+				client.Tools = []map[string]any{{"type": "function", "function": map[string]any{"name": "search_docs", "description": "Search indexed documentation", "parameters": map[string]any{"type": "object", "properties": map[string]any{"query": map[string]any{"type": "string"}}, "required": []string{"query"}}}}}
+			}
+			models[role] = client
+		}
+	}
+	local := app.NewWithModels([]rag.Document{{Source: "agentloom-demo", Text: "agentloom uses a planner, executor and verifier. The executor can retrieve indexed documentation. This is a local deterministic demonstration."}}, models)
 	if redisAddr := os.Getenv("AGENTLOOM_REDIS_ADDR"); redisAddr != "" {
 		store := app.NewRedisTraceStore(redisAddr, 24*time.Hour)
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)

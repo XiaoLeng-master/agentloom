@@ -79,7 +79,7 @@ curl -H 'Authorization: Bearer local-demo' -H 'Content-Type: application/json' \
 curl -H 'Authorization: Bearer local-demo' localhost:8080/v1/traces/<trace_id>
 ```
 
-演示链路经过本地网关、Planner、Executor 的 RAG Tool 和 Verifier。Trace 在响应前写入进程内存；如需跨进程保留，可执行 `docker compose up -d redis`，再设置 `AGENTLOOM_REDIS_ADDR=127.0.0.1:16379` 启动服务。后台队列异步写 Redis，请求不等待持久化；队列满或写入失败可能丢失跨进程记录，关停时会排空已接收事件。Redis 启动检查失败会报错。远端 MCP、真实模型及批量评测尚未接入此入口；Kafka、etcd、Milvus 仍未落地。
+演示链路经过本地网关、Planner、Executor 的 RAG Tool 和 Verifier。默认使用确定性演示模型；设置本地环境变量 `DEEPSEEK_API_KEY` 后，三个角色改用 DeepSeek 官方 Chat Completions API 的 `deepseek-chat`。Key 仅由 Go 服务读取，请勿写入仓库或浏览器。接入层的工具调用往返已用本地模拟服务验证；未提供真实 Key，因此尚未验证外网调用及模型实际输出质量。DeepSeek 是生成模型，检索仍使用 HashEmbedder。Trace 在响应前写入进程内存；如需跨进程保留，可执行 `docker compose up -d redis`，再设置 `AGENTLOOM_REDIS_ADDR=127.0.0.1:16379` 启动服务。后台队列异步写 Redis，请求不等待持久化；队列满或写入失败可能丢失跨进程记录，关停时会排空已接收事件。Redis 启动检查失败会报错。远端 MCP 及批量评测尚未接入此入口；Kafka、etcd、Milvus 仍未落地。
 
 环境：
 - Go 1.22+

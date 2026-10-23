@@ -29,14 +29,15 @@ type Trace struct {
 	CreatedAt time.Time               `json:"created_at"`
 }
 type App struct {
-	gate    *gateway.Gateway
-	runtime *orchestrator.Orchestrator
-	mu      sync.RWMutex
-	traces  map[string]Trace
-	store   TraceStore
-	queue   *infra.ToyQueue
-	worker  chan struct{}
-	failed  atomic.Int64
+	gate      *gateway.Gateway
+	runtime   *orchestrator.Orchestrator
+	mu        sync.RWMutex
+	traces    map[string]Trace
+	store     TraceStore
+	queue     *infra.ToyQueue
+	worker    chan struct{}
+	failed    atomic.Int64
+	modelMode bool
 }
 
 // WithTraceStore enables persistent traces; New remains dependency-free for the local demo.
@@ -74,13 +75,24 @@ func (a *App) Close() {
 }
 
 func New(docs []rag.Document) *App {
+	return NewWithModels(docs, nil)
+}
+
+// NewWithModels uses supplied role models, retaining the deterministic demo when nil.
+func NewWithModels(docs []rag.Document, models map[string]core.LLMClient) *App {
 	retriever := &rag.Retriever{Splitter: rag.RecursiveSplitter{Size: 400, Overlap: 40}, Embedder: rag.HashEmbedder{DimV: 128}, Store: &rag.MemoryStore{}}
 	retriever.Index(docs)
+	selectModel := func(role string) core.LLMClient {
+		if models != nil && models[role] != nil {
+			return models[role]
+		}
+		return demoLLM{role: role}
+	}
 	runtime := orchestrator.NewOrchestrator(1)
-	runtime.AddAgent(orchestrator.RolePlanner, core.NewAgent("planner", "local demo", demoLLM{role: "planner"}, nil, 1))
-	runtime.AddAgent(orchestrator.RoleExecutor, core.NewAgent("executor", "local demo", demoLLM{role: "executor"}, []core.Tool{searchTool{retriever}}, 2))
-	runtime.AddAgent(orchestrator.RoleVerifier, core.NewAgent("verifier", "local demo", demoLLM{role: "verifier"}, nil, 1))
-	return &App{gate: gateway.New(localAuth{}, gateway.InjectionFilter{}, gateway.NewRateLimitFilter(60, time.Minute)), runtime: runtime, traces: map[string]Trace{}}
+	runtime.AddAgent(orchestrator.RolePlanner, core.NewAgent("planner", "Return a JSON array of subtasks with id and input fields. No markdown.", selectModel("planner"), nil, 1))
+	runtime.AddAgent(orchestrator.RoleExecutor, core.NewAgent("executor", "Use search_docs for relevant evidence, then answer with its source.", selectModel("executor"), []core.Tool{searchTool{retriever}}, 2))
+	runtime.AddAgent(orchestrator.RoleVerifier, core.NewAgent("verifier", "Return JSON with task_id and pass fields. Check the execution result. No markdown.", selectModel("verifier"), nil, 1))
+	return &App{gate: gateway.New(localAuth{}, gateway.InjectionFilter{}, gateway.NewRateLimitFilter(60, time.Minute)), runtime: runtime, traces: map[string]Trace{}, modelMode: models != nil}
 }
 
 func (a *App) Handler() http.Handler {
@@ -124,7 +136,11 @@ func (a *App) chat(w http.ResponseWriter, r *http.Request) {
 		data, _ := json.Marshal(trace)
 		_ = a.queue.Push(data)
 	}
-	write(w, 200, map[string]any{"reply": answer, "trace_id": id, "verification": "passed", "mode": "local-demo"})
+	mode := "local-demo"
+	if a.modelMode {
+		mode = "deepseek"
+	}
+	write(w, 200, map[string]any{"reply": answer, "trace_id": id, "verification": "passed", "mode": mode})
 }
 
 func (a *App) trace(w http.ResponseWriter, r *http.Request) {
