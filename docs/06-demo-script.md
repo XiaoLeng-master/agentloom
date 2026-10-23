@@ -1,6 +1,6 @@
 # 06 · 演示脚本
 
-> 录一个 3-5 分钟的 demo 视频，让面试官/观众 clone 后能照着复现。
+> 录一个 3-5 分钟的 demo 视频，让开发者 clone 后能照着复现。
 > 每个分镜给出命令 + 旁白要点。建议用 asciinema 录终端，配字幕。
 
 ## 录制前准备
@@ -34,8 +34,8 @@ make bench
 
 **旁白要点**：
 - 98 条公开评估集，HitRate@K 一键复现
-- recursive 37.8% 胜出，因为段落聚合 + overlap 保边界
-- 强调："数字是零依赖词法 embedder 跑的，换 nomic-embed-text 会更高，但**方法论不变**"
+- 读取本次命令实际输出，不预设某个策略胜出
+- 数字来自零依赖词法 embedder；真实模型效果需要单独验证
 
 ### 镜 3 · HTTP 入口（15s）
 
@@ -60,7 +60,7 @@ go test -run TestAgentStateSurvivesPluginReload -v ./internal/runtime/plugin/
 
 **旁白要点**：
 - Mount 一个 tool 插件 → Acquire 拿引用 → Reload 换新版本 → 旧 handle 仍服务旧插件（零中断）→ Release 后 Dispose 旧版
-- **关键**：agent 的 conversation 数组 reload 前后不变——这是简历"不重置 agent 状态"的字面证据
+- **关键**：agent 的 conversation 数组在插件 reload 前后不变，验证状态与插件资源隔离
 - 引用计数保证在用插件不被拆
 
 ### 镜 5 · 多 Agent 池协作（40s）

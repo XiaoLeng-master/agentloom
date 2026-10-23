@@ -7,8 +7,8 @@ import (
 	"time"
 )
 
-// TestManager_HotReloadDoesNotInterruptInFlight proves the core claim of the
-// resume: a Reload mid-flight does NOT tear down a running request. The handle
+// TestManager_HotReloadDoesNotInterruptInFlight checks that Reload mid-flight
+// does not tear down a running request. The handle
 // acquired before the Reload keeps the old config; new Acquires hit the new
 // config; once the old handle is Released, Drain returns 0.
 func TestManager_HotReloadDoesNotInterruptInFlight(t *testing.T) {

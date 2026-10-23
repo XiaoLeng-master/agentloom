@@ -1,5 +1,4 @@
-// Package orchestrator implements the multi-Agent pool choreography the
-// resume describes as "Planner/Executor/Verifier 能力池分离" — the layer that
+// Package orchestrator implements the multi-Agent pool choreography — the layer that
 // turns one user turn into a planned → executed → verified collaboration
 // across role-separated Agent pools.
 //
@@ -23,7 +22,7 @@ import (
 )
 
 // Role is the capability bucket an Agent plays in a collaboration. The three
-// roles map 1:1 to the resume taxonomy: planner (expensive, few), executor
+// roles divide work into planner (expensive, few), executor
 // (cheap, scaled out), verifier (rules + small model).
 type Role string
 
@@ -45,7 +44,7 @@ const (
 
 // Contract is the message that flows between roles. Agents NEVER share
 // internal state — they communicate only via Contract. This is the literal
-// "消息契约交接" property the resume advertises.
+// explicit message-contract handoff.
 type Contract struct {
 	From     Role   `json:"from"`
 	To       Role   `json:"to"`

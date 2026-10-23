@@ -1,5 +1,5 @@
 // Package infra already hosts the prefix/embed cache (cache.go). This file
-// adds the Trace async pipeline the resume calls "Kafka 削峰 + 按月分表":
+// adds an in-memory Trace queue and monthly routing example:
 //
 //   - ToyQueue is an in-memory broker that buffers Trace events between a
 //     hot write path (the Agent's Run loop, which cannot block on storage)
@@ -12,7 +12,7 @@
 //
 // The point of the toy is not to replace Kafka. It is to make the
 // "trace never blocks the session main loop, and is queryable by month"
-// invariant — the thing an interviewer will probe — executable and tested.
+// invariant executable and tested.
 package infra
 
 import (

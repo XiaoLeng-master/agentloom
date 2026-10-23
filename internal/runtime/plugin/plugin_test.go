@@ -13,16 +13,16 @@ import (
 // It deliberately does NOT hold any Agent reference — that is the design
 // property under test.
 type fakePlugin struct {
-	name    string
-	kind    Kind
-	initErr error
-	inits   int32
+	name     string
+	kind     Kind
+	initErr  error
+	inits    int32
 	disposes int32
 	connOpen bool
 }
 
 func (p *fakePlugin) Name() string { return p.name }
-func (p *fakePlugin) Kind() Kind    { return p.kind }
+func (p *fakePlugin) Kind() Kind   { return p.kind }
 func (p *fakePlugin) Init(ctx context.Context) error {
 	atomic.AddInt32(&p.inits, 1)
 	if p.initErr != nil {
@@ -37,8 +37,8 @@ func (p *fakePlugin) Dispose() error {
 	return nil
 }
 
-// fakeAgent owns its own conversation state. The resume claims plugin
-// lifecycle never resets this; the test demonstrates the isolation by never
+// fakeAgent owns its own conversation state. Plugin lifecycle cannot reset it;
+// the test demonstrates the isolation by never
 // giving the plugin a handle to the agent.
 type fakeAgent struct {
 	mu           sync.Mutex
@@ -211,8 +211,7 @@ func TestUnmountRefusesInFlight(t *testing.T) {
 	}
 }
 
-// TestAgentStateSurvivesPluginReload is the property the resume advertises:
-// "mount / reload / dispose 不重置 agent 状态". The design enforces it by
+// TestAgentStateSurvivesPluginReload checks state isolation. The design enforces it by
 // never handing the Agent to a Plugin; this test demonstrates the isolation
 // holds even across a full reload+dispose cycle.
 func TestAgentStateSurvivesPluginReload(t *testing.T) {

@@ -4,8 +4,7 @@
 // The contract is deliberately narrow: a Plugin owns only its own resources
 // (a client connection, a loaded model, an evaluator registry). It never
 // receives an Agent reference, so mounting or disposing a Plugin cannot reset
-// the Agent's conversation state — that is the property the resume relies on
-// when it says "mount / reload / dispose 不重置 agent 状态".
+// the Agent's conversation state, which remains independent of plugin lifecycle.
 //
 // Concurrency follows the same pattern as internal/config: a Handle holds a
 // refcount on the active version; Reload supersedes the old version but leaves
@@ -23,8 +22,7 @@ import (
 )
 
 // Kind classifies a Plugin so the runtime can route by capability rather than
-// by name. The four kinds map 1:1 to the resume's "planner / memory / tool /
-// evaluator" taxonomy.
+// by name. The four kinds are planner, memory, tool, and evaluator.
 type Kind string
 
 const (

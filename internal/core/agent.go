@@ -50,7 +50,7 @@ func (a *Agent) Name() string { return a.name }
 // final answer when the model stops emitting tool calls, or an error when the
 // context is cancelled, the LLM call fails, or the iteration cap is reached.
 //
-// Robustness rules baked in (the three an interviewer will probe):
+// Robustness rules:
 //   - iteration cap: a buggy model that always issues tool calls cannot loop
 //     forever;
 //   - context propagation: a cancelled HTTP request unwinds through every

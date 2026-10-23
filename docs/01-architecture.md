@@ -1,5 +1,7 @@
 # 01 · 架构详解
 
+> 本文描述目标架构；当前可运行范围以 README 状态表和 `internal/app` 的本地演示链路为准。Kafka、Redis、Milvus、etcd 与自动优化发布尚未接入主请求链路。
+
 > 配合 [`architecture.svg`](./architecture.svg) 阅读。本文回答"每一层为什么存在、它们怎么咬合"。
 
 ## 设计总纲

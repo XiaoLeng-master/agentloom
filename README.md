@@ -38,16 +38,16 @@ agentloom 把这三件事做在同一套平台里，并且**让每一环都咬�
 
 | 特性 | 说明 | 状态 |
 |---|---|---|
-| **多 Agent 分层协作** | Planner / Executor / Verifier 能力池分离，round-robin 横向扩，消息契约交接 | ✅ |
+| **多 Agent 分层协作** | Planner / Executor / Verifier 角色池与消息契约；子任务当前串行执行 | ✅ |
 | **Harness 自进化闭环** | 已有独立 Trace/评测原语与离线候选门禁；自动归因、任务生成、线上灰度和回滚尚未串联 | 🚧 |
 | **预测式归因** | 每次优化提交声明预期收益，评测验证预测成立与否，逐次变更可归因 | 📋 |
-| **配置热更新** | 引用计数安全替换，运行中秒级切换、零中断（Source 接口，etcd 为生产 Source） | ✅ |
+| **配置热更新** | 进程内引用计数替换；etcd Source 尚未实现 | ✅ |
 | **MCP 双传输适配** | stdio / HTTP JSON-RPC；请求取消、响应关联校验与有限 JSON Schema 参数校验；写工具默认不重试 | 🚧 |
 | **可评测 RAG** | 4 种切分策略可插拔 + 自建 98 条标注评估集，HitRate@K 可一键复现 | ✅ |
-| **评测 harness** | Trace + 4 评测器 + G-Eval logprobs 加权 + Markdown 门禁报告 | ✅ |
-| **网关治理链** | Filter Chain：认证 / Prompt 注入检测 / per-tenant 限流，fail-fast | ✅ |
+| **评测 harness** | Trace + 规则代理评测器 + 词法测试 Prober + Markdown 报告；真实 Judge 尚未接入 | 🚧 |
+| **网关治理链** | Filter Chain：本地演示 token、关键词注入信号、单机租户限流 | 🚧 |
 | **插件化运行时** | IoC 生命周期：planner/memory/tool/evaluator 可热插拔，mount/reload/dispose 不重置 agent 状态 | ✅ |
-| **后端底座** | Trace 削峰队列 + 按月分表 + 多级缓存（prefix/embed）+ DLQ | ✅ |
+| **后端底座** | 内存 Trace 队列、按月分组及内存缓存；尚无持久化、Kafka 或 DLQ | 🚧 |
 
 > ✅ = 已实现且有测试 / 🚧 = 组件就位，运行时串联推进中 / 📋 = 设计完成待实现
 
@@ -58,13 +58,13 @@ agentloom 把这三件事做在同一套平台里，并且**让每一环都咬�
 ```bash
 git clone https://github.com/XiaoLeng-master/agentloom.git
 cd agentloom
-make verify      # fmt + vet + 全量测试（含 race），三秒内全绿
-make bench       # 跑切分策略 HitRate@K 对比表（实际可复现数字见 docs/03-benchmark.md）
+make verify      # 格式整理 + vet + 全量 race 测试
+make bench       # 输出当前提交的切分策略 HitRate@K 对比表
 make run         # 启动 HTTP 入口 agentd，监听 :8080
 curl localhost:8080/health   # {"status":"ok","agents":["kb-agent"]}
 ```
 
-> `make run` 起的 `agentd` 是最小 HTTP 表面，配置热更新 Manager 从启动即生效；Agent ReAct 循环、MCP 工具、评测闭环按模块逐步接进来。
+> `make run` 提供确定性本地演示；配置 Manager 已初始化，但演示请求尚未从 Manager 获取版本化配置。
 
 本地端到端演示（确定性演示模型、内存文档检索；不是在线 LLM 或生产知识库）：
 
@@ -80,9 +80,7 @@ curl -H 'Authorization: Bearer local-demo' localhost:8080/v1/traces/<trace_id>
 
 环境：
 - Go 1.22+
-- （可选）Ollama + qwen2.5 / nomic-embed-text：把 `HashEmbedder` 换成真实 embedder，跑生产级 benchmark 数字；当前零依赖词法 embedder 即可复现方法论。
-- Ollama + qwen2.5（Judge）+ nomic-embed-text（embedding）
-- etcd / Redis / Milvus / Kafka（docker-compose 一键起）
+- 当前仅需 Go 1.22+；真实模型和外部基础设施仍在路线图中。
 
 ## 仓库结构
 
@@ -93,10 +91,10 @@ agentloom/
 │   ├── architecture.svg         # 架构图（源文件）
 │   ├── 01-architecture.md        # 四面分层 + 数据流 + 闭环详解
 │   ├── 02-design-decisions.md   # 6 个设计取舍（为什么这么做）
-│   ├── 03-benchmark.md          # 切分策略 × Top-K 的 HitRate 表 + 复现命令
+│   ├── 03-benchmark.md          # 指标口径与复现命令
 │   ├── 04-dataset-construction.md # 98 条评估集怎么标的、怎么扩展
 │   ├── 05-evaluation-method.md  # 4 评测器算法 + 门禁规则 + 怎么跑
-│   ├── 06-demo-script.md        # 7 分镜演示脚本（面试官可照着复现）
+│   ├── 06-demo-script.md        # 可复现演示脚本
 │   └── roadmap.md               # 10 天排期
 ├── cmd/                          # HTTP 入口（WIP）
 ├── internal/
@@ -110,8 +108,8 @@ agentloom/
 │   ├── orchestrator/             # 多 Agent 池（planner/executor/verifier + 消息契约）
 │   └── infra/                    # 削峰队列、按月分表、prefix/embed 缓存
 ├── datasets/rag_eval_98.json     # 自建 98 条标注评估集（公开来源）
-├── scripts/                      # bench.sh / eval.sh
-├── examples/                     # 2 个可跑示例
+├── scripts/                      # bench.sh 与数据集构造脚本
+├── examples/                     # 预留示例目录
 └── Makefile
 ```
 
