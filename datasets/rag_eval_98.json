@@ -558,5 +558,131 @@
     "question": "限流分哪两级？",
     "groundTruth": "全局 + 租户",
     "sourceDoc": "docs/01-architecture.md"
+  },
+  {
+    "id": "eval_081",
+    "type": "lifecycle",
+    "question": "Plugin 接口定义了哪四个方法？",
+    "groundTruth": "Name、Kind、Init、Dispose",
+    "sourceDoc": "docs/02-design-decisions.md"
+  },
+  {
+    "id": "eval_082",
+    "type": "lifecycle",
+    "question": "Plugin 按能力分为哪四类 Kind？",
+    "groundTruth": "planner、memory、tool、evaluator",
+    "sourceDoc": "docs/02-design-decisions.md"
+  },
+  {
+    "id": "eval_083",
+    "type": "lifecycle",
+    "question": "插件热更新靠什么保证零中断？",
+    "groundTruth": "引用计数（Handle 持 refcount，Reload 超度旧版等 drain）",
+    "sourceDoc": "docs/02-design-decisions.md"
+  },
+  {
+    "id": "eval_084",
+    "type": "lifecycle",
+    "question": "Dispose 一个插件会重置 agent 的会话状态吗？",
+    "groundTruth": "不会（Plugin 不持有 Agent 引用，只清自身资源）",
+    "sourceDoc": "docs/02-design-decisions.md"
+  },
+  {
+    "id": "eval_085",
+    "type": "orchestration",
+    "question": "多 Agent 协作分哪三个角色池？",
+    "groundTruth": "Planner、Executor、Verifier",
+    "sourceDoc": "docs/01-architecture.md"
+  },
+  {
+    "id": "eval_086",
+    "type": "orchestration",
+    "question": "池内有多个 Agent 实例时按什么策略选？",
+    "groundTruth": "round-robin（轮询）",
+    "sourceDoc": "docs/01-architecture.md"
+  },
+  {
+    "id": "eval_087",
+    "type": "orchestration",
+    "question": "Agent 之间通过什么交接任务？",
+    "groundTruth": "Contract 消息契约",
+    "sourceDoc": "docs/01-architecture.md"
+  },
+  {
+    "id": "eval_088",
+    "type": "orchestration",
+    "question": "Verifier 判定子任务失败后怎么处理？",
+    "groundTruth": "回流让 Planner 重规划（最多 maxReplan 次）",
+    "sourceDoc": "docs/01-architecture.md"
+  },
+  {
+    "id": "eval_089",
+    "type": "infra",
+    "question": "Trace 异步采集用什么削峰？",
+    "groundTruth": "内存队列（ToyQueue，模拟 Kafka 削峰）",
+    "sourceDoc": "docs/01-architecture.md"
+  },
+  {
+    "id": "eval_090",
+    "type": "infra",
+    "question": "按月分表按什么路由 Trace？",
+    "groundTruth": "时间戳的 YYYY-MM",
+    "sourceDoc": "docs/01-architecture.md"
+  },
+  {
+    "id": "eval_091",
+    "type": "infra",
+    "question": "并发控制的 worker pool 配额分几级？",
+    "groundTruth": "两级",
+    "sourceDoc": "docs/01-architecture.md"
+  },
+  {
+    "id": "eval_092",
+    "type": "infra",
+    "question": "多级缓存用什么防止缓存击穿？",
+    "groundTruth": "singleflight",
+    "sourceDoc": "docs/02-design-decisions.md"
+  },
+  {
+    "id": "eval_093",
+    "type": "infra",
+    "question": "LLM 调用的缓存包含哪两类？",
+    "groundTruth": "prompt 前缀缓存 + Embedding 缓存",
+    "sourceDoc": "docs/02-design-decisions.md"
+  },
+  {
+    "id": "eval_094",
+    "type": "infra",
+    "question": "消费失败的 Trace 走到哪里？",
+    "groundTruth": "DLQ（死信队列）",
+    "sourceDoc": "docs/01-architecture.md"
+  },
+  {
+    "id": "eval_095",
+    "type": "attribution",
+    "question": "预测式归因解决什么问题？",
+    "groundTruth": "逐次变更可归因，避免分数涨跌但不知为何",
+    "sourceDoc": "docs/02-design-decisions.md"
+  },
+  {
+    "id": "eval_096",
+    "type": "eval",
+    "question": "G-Eval 用 logprobs 做什么？",
+    "groundTruth": "对候选评分 Token 概率归一化与加权，降低单次离散评分波动",
+    "sourceDoc": "docs/02-design-decisions.md"
+  },
+  {
+    "id": "eval_097",
+    "type": "closedloop",
+    "question": "评测闭环里优化通过什么门槛才上线？",
+    "groundTruth": "复测门禁通过即灰度上线",
+    "sourceDoc": "docs/01-architecture.md"
+  },
+  {
+    "id": "eval_098",
+    "type": "design",
+    "question": "多级缓存借鉴了哪个项目的 prefix cache？",
+    "groundTruth": "Pi（prefix cache）",
+    "sourceDoc": "docs/02-design-decisions.md"
   }
 ]

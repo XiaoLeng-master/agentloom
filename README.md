@@ -38,21 +38,22 @@ agentloom 把这三件事做在同一套平台里，并且**让每一环都咬�
 
 | 特性 | 说明 | 状态 |
 |---|---|---|
-| **多 Agent 分层协作** | Planner / Executor / Verifier 能力池分离，按成本与负载独立扩缩 | 🚧 |
+| **多 Agent 分层协作** | Planner / Executor / Verifier 能力池分离，round-robin 横向扩，消息契约交接 | ✅ |
 | **Harness 自进化闭环** | Trace 采集 → 批量评测 → 失败聚类归因 → 优化任务 → 复测门禁 → 热更新灰度 | 🚧 |
 | **预测式归因** | 每次优化提交声明预期收益，评测验证预测成立与否，逐次变更可归因 | 📋 |
 | **配置热更新** | 引用计数安全替换，运行中秒级切换、零中断（Source 接口，etcd 为生产 Source） | ✅ |
 | **MCP 双传输适配** | stdio / HTTP 双传输 → 统一 Tool 契约，schema 校验 + 超时重试 + 错误码归一 | ✅ |
-| **可评测 RAG** | 4 种切分策略可插拔 + 自建 80 条标注评估集，HitRate@K 可一键复现 | ✅ |
+| **可评测 RAG** | 4 种切分策略可插拔 + 自建 98 条标注评估集，HitRate@K 可一键复现 | ✅ |
 | **评测 harness** | Trace + 4 评测器 + G-Eval logprobs 加权 + Markdown 门禁报告 | ✅ |
 | **网关治理链** | Filter Chain：认证 / Prompt 注入检测 / per-tenant 限流，fail-fast | ✅ |
-| **后端底座** | 并发池 + 两级配额、多级缓存 + singleflight 防击穿、Trace 按月分表、评测幂等消费 + DLQ | 📋 |
+| **插件化运行时** | IoC 生命周期：planner/memory/tool/evaluator 可热插拔，mount/reload/dispose 不重置 agent 状态 | ✅ |
+| **后端底座** | Trace 削峰队列 + 按月分表 + 多级缓存（prefix/embed）+ DLQ | ✅ |
 
 > ✅ = 已实现且有测试 / 🚧 = 组件就位，运行时串联推进中 / 📋 = 设计完成待实现
 
 ## 快速开始
 
-核心模块已实现（config 热更新 / mcp 适配 / rag 4 切分 / eval 评测器 / gateway 治理链），`go test ./...` 全绿。多 Agent 分层协作的运行时串联按 Roadmap 推进。
+核心模块已实现（config 热更新 / mcp 适配 / rag 4 切分 / eval 评测器 / gateway 治理链 / runtime 插件生命周期 / orchestrator 多 Agent 池 / infra 削峰分表），`go test ./...` 全绿。自进化闭环的端到端串联按 Roadmap 推进。
 
 ```bash
 git clone https://github.com/XiaoLeng-master/agentloom.git
@@ -90,8 +91,10 @@ agentloom/
 │   ├── rag/                      # splitter(4 策略)、embedding、store、retriever
 │   ├── eval/                     # trace、evaluator、geval、report
 │   ├── gateway/                  # filter chain（认证/注入检测/限流）
-│   └── infra/                    # 并发池、缓存、mq、分表辅助
-├── datasets/rag_eval_80.json     # 自建 80 条标注评估集（公开来源）
+│   ├── runtime/plugin/           # IoC 插件生命周期（mount/reload/dispose）
+│   ├── orchestrator/             # 多 Agent 池（planner/executor/verifier + 消息契约）
+│   └── infra/                    # 削峰队列、按月分表、prefix/embed 缓存
+├── datasets/rag_eval_98.json     # 自建 98 条标注评估集（公开来源）
 ├── scripts/                      # bench.sh / eval.sh
 ├── examples/                     # 2 个可跑示例
 └── Makefile
@@ -106,7 +109,7 @@ agentloom/
 3. **为什么按能力拆池而非按 Agent 拆**——真正高并发的不是"思考"，是"调工具、写回系统"。把稀缺 LLM 推理与大量 I/O 分离，降成本与尾延迟。
 4. **为什么 Trace 走 Kafka 异步**——Trace 高频写入不能阻塞会话主链路；Kafka 还能回放做回归。
 5. **为什么每次优化带"预测"**——预测的匹配/证伪比分数涨跌多一比特信息，能归因到"你对系统的理解"而非运气。
-6. **为什么自建 80 条公开评估集**——私有数据不能开源，公开数据集可复现可审计，clone 下来就能跑。
+6. **为什么自建 98 条公开评估集**——私有数据不能开源，公开数据集可复现可审计，clone 下来就能跑。
 
 ## Roadmap
 

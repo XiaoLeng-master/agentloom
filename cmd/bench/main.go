@@ -1,5 +1,5 @@
 // Command bench runs the RAG chunking-strategy benchmark against
-// datasets/rag_eval_80.json and prints a HitRate@K / MRR@K comparison table.
+// datasets/rag_eval_98.json and prints a HitRate@K / MRR@K comparison table.
 //
 // The embedder is the dependency-free HashEmbedder (lexical overlap). It is NOT
 // semantic — it makes HitRate differences between strategies attributable to
@@ -25,7 +25,7 @@ type evalCase struct {
 }
 
 func main() {
-	data, err := os.ReadFile("datasets/rag_eval_80.json")
+	data, err := os.ReadFile("datasets/rag_eval_98.json")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "read dataset: %v\n", err)
 		os.Exit(1)
@@ -71,7 +71,7 @@ func main() {
 	const K = 3
 
 	fmt.Printf("# agentloom RAG chunking benchmark\n\n")
-	fmt.Printf("- dataset: datasets/rag_eval_80.json (%d cases)\n", len(cases))
+	fmt.Printf("- dataset: datasets/rag_eval_98.json (%d cases)\n", len(cases))
 	fmt.Printf("- embedder: HashEmbedder (lexical baseline; real numbers need Ollama nomic-embed-text)\n")
 	fmt.Printf("- K = %d, hit = top-K contains a chunk whose source matches the case's sourceDoc\n\n", K)
 	fmt.Printf("| 切分策略 | HitRate@K | MRR@K |\n|---|---|---|\n")
