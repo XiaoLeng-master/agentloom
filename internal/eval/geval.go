@@ -1,6 +1,9 @@
 package eval
 
-import "strings"
+import (
+	"math"
+	"strings"
+)
 
 // GEval implements the logprobs-weighted scoring scheme: instead of sampling a
 // single discrete score (high variance), it reads the judge model's
@@ -23,6 +26,9 @@ func (g GEval) Eval(t Trace) Score {
 	probs := prober(t.Answer, t.Expected.Answer)
 	var num, den float32
 	for tok, p := range probs {
+		if len(tok) != 1 || tok[0] < '1' || tok[0] > '5' || math.IsNaN(float64(p)) || math.IsInf(float64(p), 0) || p < 0 {
+			return Score{Name: "geval", Reason: "invalid judge distribution"}
+		}
 		w := float32(tok[0] - '0') // "1".."5" -> 1..5
 		num += w * p
 		den += p

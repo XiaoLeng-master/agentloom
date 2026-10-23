@@ -28,20 +28,19 @@ func (RAGEvaluator) Eval(t Trace) Score {
 	if len(t.Expected.GroundedIn) == 0 {
 		return Score{Name: "rag", Value: 1, Reason: "no grounding expected", Pass: true}
 	}
+	want := toSet(t.Expected.GroundedIn)
+	got := toSet(t.Citations)
 	hits := 0
-	for _, c := range t.Citations {
-		for _, g := range t.Expected.GroundedIn {
-			if c == g {
-				hits++
-				break
-			}
+	for g := range want {
+		if got[g] {
+			hits++
 		}
 	}
-	recall := float32(hits) / float32(len(t.Expected.GroundedIn))
+	recall := float32(hits) / float32(len(want))
 	return Score{
 		Name:   "rag",
 		Value:  recall,
-		Reason: "citation recall vs expected sources (faithfulness)",
+		Reason: "citation recall vs expected sources (not claim-level faithfulness)",
 		Pass:   recall >= 0.5,
 	}
 }
@@ -62,11 +61,14 @@ func (SkillEvaluator) Eval(t Trace) Score {
 			inter++
 		}
 	}
-	p := float32(inter) / float32(len(want))
+	p := float32(inter) / float32(len(got))
+	if len(got) == 0 {
+		p = 0
+	}
 	return Score{
 		Name:   "skill",
 		Value:  p,
-		Reason: "expected tool precision (did agent pick the right tools)",
+		Reason: "tool precision vs expected tools (extra tools reduce score)",
 		Pass:   p >= 0.5,
 	}
 }

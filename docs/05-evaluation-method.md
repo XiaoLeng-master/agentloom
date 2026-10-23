@@ -9,14 +9,14 @@ agentloom 实现 4 类评测器，统一实现 `Evaluator` 接口：
 ```go
 type Evaluator interface {
     Name() string
-    Evaluate(ctx, EvalInput) (EvalResult, error)
+    Eval(Trace) Score
 }
 ```
 
 | 评测器 | 评什么 | 怎么算 | 代码 |
 |---|---|---|---|
 | **G-Eval** | 答案质量分 | 见下"G-Eval 算法" | `eval/geval.go` |
-| **Faithfulness** | 答案是否忠于上下文 | 声明级拆解 → 逐条查上下文是否支持 → 不支持的记为幻觉 | `eval/evaluators.go` |
+| **RAG 来源召回代理** | 引用是否覆盖期望来源 | 去重后的引用来源召回；不判断答案声明真实性 | `eval/evaluators.go` |
 | **检索排序** | 检索结果排序质量 | HitRate@K + MRR@K（见下） | `cmd/bench/main.go` |
 | **任务完成** | Agent 是否完成用户意图 | 规则匹配终态 + 工具调用轨迹校验 | `eval/evaluators.go` |
 
@@ -31,7 +31,7 @@ type Evaluator interface {
 
 这样即使模型最可能输出 "4"，只要 p(5) 不为 0，分数就略高于 4，反映模型对 "5" 的部分置信。**单次跑分稳定**，不用多次平均。
 
-代码：`internal/eval/geval.go`。模型不支持 logprobs 时降级为离散分（带 warning）。
+代码：`internal/eval/geval.go`。当前默认 Prober 依据词法重叠生成测试概率，不调用真实 Judge；接入模型需另行实现并验证 logprobs 口径。
 
 ### HitRate@K / MRR@K（检索质量）
 
@@ -87,8 +87,8 @@ go test -race ./internal/eval/
 ```
 | 切分策略 | HitRate@K | MRR@K |
 |---|---|---|
-| fixed | 26.5% | 16.0% |
-| recursive | 37.8% | 25.9% |
+| fixed | 以当前 `make bench` 输出为准 | 同左 |
+| recursive | 以当前 `make bench` 输出为准 | 同左 |
 ```
 
 ## 设计取舍：为什么规则优先、LLM-as-Judge 兜底

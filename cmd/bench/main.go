@@ -55,8 +55,8 @@ func main() {
 		seen[c.SourceDoc] = true
 		text, err := os.ReadFile(c.SourceDoc)
 		if err != nil {
-			// skip missing files (e.g. source not yet committed)
-			continue
+			fmt.Fprintf(os.Stderr, "read source %s: %v\n", c.SourceDoc, err)
+			os.Exit(1)
 		}
 		documents = append(documents, rag.Document{Source: c.SourceDoc, Text: string(text)})
 	}
