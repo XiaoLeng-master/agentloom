@@ -82,6 +82,9 @@ agentloom/
 │   ├── 01-architecture.md        # 四面分层 + 数据流 + 闭环详解
 │   ├── 02-design-decisions.md   # 6 个设计取舍（为什么这么做）
 │   ├── 03-benchmark.md          # 切分策略 × Top-K 的 HitRate 表 + 复现命令
+│   ├── 04-dataset-construction.md # 98 条评估集怎么标的、怎么扩展
+│   ├── 05-evaluation-method.md  # 4 评测器算法 + 门禁规则 + 怎么跑
+│   ├── 06-demo-script.md        # 7 分镜演示脚本（面试官可照着复现）
 │   └── roadmap.md               # 10 天排期
 ├── cmd/                          # HTTP 入口（WIP）
 ├── internal/
