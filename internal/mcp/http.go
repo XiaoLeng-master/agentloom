@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"sync"
+	"time"
 )
 
 // HTTPTransport speaks JSON-RPC 2.0 over HTTP POST. Suitable for remote MCP
@@ -20,7 +21,7 @@ type HTTPTransport struct {
 
 // NewHTTPTransport connects to an MCP HTTP endpoint.
 func NewHTTPTransport(endpoint string) *HTTPTransport {
-	return &HTTPTransport{endpoint: endpoint, client: &http.Client{}}
+	return &HTTPTransport{endpoint: endpoint, client: &http.Client{Timeout: 30 * time.Second}}
 }
 
 func (t *HTTPTransport) call(ctx context.Context, method string, params any) (any, error) {
@@ -29,7 +30,10 @@ func (t *HTTPTransport) call(ctx context.Context, method string, params any) (an
 	id := t.nextID
 	t.mu.Unlock()
 	req := jsonRPCRequest{JSONRPC: "2.0", ID: id, Method: method, Params: params}
-	b, _ := json.Marshal(req)
+	b, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("mcp http: encode: %w", err)
+	}
 	hr, err := http.NewRequestWithContext(ctx, http.MethodPost, t.endpoint, bytes.NewReader(b))
 	if err != nil {
 		return nil, err
@@ -40,8 +44,14 @@ func (t *HTTPTransport) call(ctx context.Context, method string, params any) (an
 		return nil, fmt.Errorf("mcp http: %w", err)
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("mcp http: status %d", resp.StatusCode)
+	}
 	var jr jsonRPCResponse
 	if err := json.NewDecoder(resp.Body).Decode(&jr); err != nil {
+		return nil, err
+	}
+	if err := validateResponse(jr, id); err != nil {
 		return nil, err
 	}
 	if jr.Error != nil {

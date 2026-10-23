@@ -20,6 +20,7 @@ type StdioTransport struct {
 	stdout *bufio.Reader
 	mu     sync.Mutex
 	nextID int
+	closed bool
 }
 
 // NewStdioTransport spawns serverCmd and connects to its stdio pipes.
@@ -39,9 +40,18 @@ func NewStdioTransport(serverCmd string, args ...string) (*StdioTransport, error
 	return &StdioTransport{cmd: c, stdin: in, stdout: bufio.NewReader(out)}, nil
 }
 
-func (t *StdioTransport) roundTrip(_ context.Context, method string, params any) (any, error) {
+func (t *StdioTransport) roundTrip(ctx context.Context, method string, params any) (any, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if t.closed {
+		return nil, fmt.Errorf("mcp stdio: closed")
+	}
 	t.nextID++
 	req := jsonRPCRequest{JSONRPC: "2.0", ID: t.nextID, Method: method, Params: params}
 	b, err := json.Marshal(req)
@@ -51,13 +61,34 @@ func (t *StdioTransport) roundTrip(_ context.Context, method string, params any)
 	if _, err := t.stdin.Write(append(b, '\n')); err != nil {
 		return nil, fmt.Errorf("mcp stdio: write: %w", err)
 	}
-	line, err := t.stdout.ReadBytes('\n')
+	type readResult struct {
+		line []byte
+		err  error
+	}
+	read := make(chan readResult, 1)
+	go func() { line, err := t.stdout.ReadBytes('\n'); read <- readResult{line, err} }()
+	var line []byte
+	select {
+	case result := <-read:
+		line, err = result.line, result.err
+	case <-ctx.Done():
+		t.closed = true
+		_ = t.stdin.Close()
+		if t.cmd.Process != nil {
+			_ = t.cmd.Process.Kill()
+		}
+		<-read
+		return nil, ctx.Err()
+	}
 	if err != nil {
 		return nil, fmt.Errorf("mcp stdio: read: %w", err)
 	}
 	var resp jsonRPCResponse
 	if err := json.Unmarshal(line, &resp); err != nil {
 		return nil, fmt.Errorf("mcp stdio: decode: %w", err)
+	}
+	if err := validateResponse(resp, t.nextID); err != nil {
+		return nil, err
 	}
 	if resp.Error != nil {
 		return nil, fmt.Errorf("mcp stdio: rpc %d: %s", resp.Error.Code, resp.Error.Message)

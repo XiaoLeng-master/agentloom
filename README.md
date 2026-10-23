@@ -42,7 +42,7 @@ agentloom 把这三件事做在同一套平台里，并且**让每一环都咬�
 | **Harness 自进化闭环** | Trace 采集 → 批量评测 → 失败聚类归因 → 优化任务 → 复测门禁 → 热更新灰度 | 🚧 |
 | **预测式归因** | 每次优化提交声明预期收益，评测验证预测成立与否，逐次变更可归因 | 📋 |
 | **配置热更新** | 引用计数安全替换，运行中秒级切换、零中断（Source 接口，etcd 为生产 Source） | ✅ |
-| **MCP 双传输适配** | stdio / HTTP 双传输 → 统一 Tool 契约，schema 校验 + 超时重试 + 错误码归一 | ✅ |
+| **MCP 双传输适配** | stdio / HTTP JSON-RPC；请求取消、响应关联校验与有限 JSON Schema 参数校验；写工具默认不重试 | 🚧 |
 | **可评测 RAG** | 4 种切分策略可插拔 + 自建 98 条标注评估集，HitRate@K 可一键复现 | ✅ |
 | **评测 harness** | Trace + 4 评测器 + G-Eval logprobs 加权 + Markdown 门禁报告 | ✅ |
 | **网关治理链** | Filter Chain：认证 / Prompt 注入检测 / per-tenant 限流，fail-fast | ✅ |

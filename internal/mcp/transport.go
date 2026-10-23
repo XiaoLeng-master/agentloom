@@ -7,13 +7,23 @@ package mcp
 
 import (
 	"context"
+	"fmt"
 )
+
+func validateResponse(resp jsonRPCResponse, id int) error {
+	if resp.JSONRPC != "2.0" || resp.ID != id {
+		return fmt.Errorf("mcp: mismatched JSON-RPC response: version %q, id %d (want %d)", resp.JSONRPC, resp.ID, id)
+	}
+	return nil
+}
 
 // ToolSchema describes a tool advertised by an MCP server.
 type ToolSchema struct {
 	Name        string
 	Description string
 	InputSchema map[string]any
+	// ReadOnly must be explicitly set by the connector owner before retry policy is considered.
+	ReadOnly bool
 }
 
 // Transport is the MCP transport contract. stdio and HTTP both implement it.

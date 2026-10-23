@@ -15,6 +15,7 @@ import (
 type MCPTool struct {
 	name      string
 	schema    map[string]any
+	readOnly  bool
 	transport Transport
 }
 
@@ -26,7 +27,7 @@ func Bind(ctx context.Context, t Transport, name string) (*MCPTool, error) {
 	}
 	for _, td := range tools {
 		if td.Name == name {
-			return &MCPTool{name: td.Name, schema: td.InputSchema, transport: t}, nil
+			return &MCPTool{name: td.Name, schema: td.InputSchema, readOnly: td.ReadOnly, transport: t}, nil
 		}
 	}
 	return nil, fmt.Errorf("mcp: tool %q not advertised", name)
@@ -34,7 +35,13 @@ func Bind(ctx context.Context, t Transport, name string) (*MCPTool, error) {
 
 func (m *MCPTool) Name() string           { return m.name }
 func (m *MCPTool) Schema() map[string]any { return m.schema }
+
+// ReadOnly reports the connector owner's effect classification; unknown defaults to false.
+func (m *MCPTool) ReadOnly() bool { return m.readOnly }
 func (m *MCPTool) Call(ctx context.Context, args map[string]any) (string, error) {
+	if err := validateArguments(m.schema, args); err != nil {
+		return "", fmt.Errorf("mcp tool %s: %w", m.name, err)
+	}
 	r, err := m.transport.Call(ctx, m.name, args)
 	if err != nil {
 		return "", err
@@ -59,7 +66,7 @@ func AdvertiseAll(ctx context.Context, t Transport) ([]core.Tool, error) {
 	out := make([]core.Tool, 0, len(tools))
 	for _, td := range tools {
 		td := td
-		out = append(out, &MCPTool{name: td.Name, schema: td.InputSchema, transport: t})
+		out = append(out, &MCPTool{name: td.Name, schema: td.InputSchema, readOnly: td.ReadOnly, transport: t})
 	}
 	return out, nil
 }
