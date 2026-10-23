@@ -29,10 +29,11 @@ func main() {
 	// Seed one agent so the hot-reload manager is exercised from boot.
 	mgr := config.NewManager()
 	mgr.Register("kb-agent", config.Config{
-		Name:         "kb-agent",
-		SystemPrompt: "You are a knowledge-base assistant.",
-		Model:        "qwen2.5",
-		MaxIter:      10,
+		Name:          "kb-agent",
+		SystemPrompt:  "You are a knowledge-base assistant.",
+		Model:         "qwen2.5",
+		MaxIter:       10,
+		ChunkStrategy: "fixed",
 	})
 
 	mux := http.NewServeMux()
@@ -48,6 +49,7 @@ func main() {
 		}
 	}
 	local := app.NewWithModels([]rag.Document{{Source: "agentloom-demo", Text: "agentloom uses a planner, executor and verifier. The executor can retrieve indexed documentation. This is a local deterministic demonstration."}}, models)
+	local.WithConfigManager(mgr)
 	if redisAddr := os.Getenv("AGENTLOOM_REDIS_ADDR"); redisAddr != "" {
 		store := app.NewRedisTraceStore(redisAddr, 24*time.Hour)
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)

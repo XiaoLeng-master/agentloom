@@ -14,7 +14,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/XiaoLeng-master/agentloom/internal/config"
 	"github.com/XiaoLeng-master/agentloom/internal/core"
+	"github.com/XiaoLeng-master/agentloom/internal/evolution"
 	"github.com/XiaoLeng-master/agentloom/internal/gateway"
 	"github.com/XiaoLeng-master/agentloom/internal/infra"
 	"github.com/XiaoLeng-master/agentloom/internal/orchestrator"
@@ -22,23 +24,33 @@ import (
 )
 
 type Trace struct {
-	ID        string                  `json:"id"`
-	Query     string                  `json:"query"`
-	Answer    string                  `json:"answer"`
-	Contracts []orchestrator.Contract `json:"contracts"`
-	CreatedAt time.Time               `json:"created_at"`
+	ID            string                  `json:"id"`
+	Query         string                  `json:"query"`
+	Answer        string                  `json:"answer"`
+	Contracts     []orchestrator.Contract `json:"contracts"`
+	CreatedAt     time.Time               `json:"created_at"`
+	ConfigVersion int                     `json:"config_version,omitempty"`
+	ChunkStrategy string                  `json:"chunk_strategy,omitempty"`
 }
 type App struct {
-	gate      *gateway.Gateway
-	runtime   *orchestrator.Orchestrator
-	mu        sync.RWMutex
-	traces    map[string]Trace
-	store     TraceStore
-	queue     *infra.ToyQueue
-	worker    chan struct{}
-	failed    atomic.Int64
-	modelMode bool
+	gate       *gateway.Gateway
+	runtime    *orchestrator.Orchestrator
+	mu         sync.RWMutex
+	traces     map[string]Trace
+	store      TraceStore
+	queue      *infra.ToyQueue
+	worker     chan struct{}
+	failed     atomic.Int64
+	modelMode  bool
+	manager    *config.Manager
+	corpusPath string
 }
+
+// WithConfigManager makes each request acquire one immutable configuration version.
+func (a *App) WithConfigManager(manager *config.Manager) *App { a.manager = manager; return a }
+
+// WithCorpusPath locates the public evaluation set for an offline experiment.
+func (a *App) WithCorpusPath(path string) *App { a.corpusPath = path; return a }
 
 // WithTraceStore enables persistent traces; New remains dependency-free for the local demo.
 func (a *App) WithTraceStore(store TraceStore) *App {
@@ -80,8 +92,12 @@ func New(docs []rag.Document) *App {
 
 // NewWithModels uses supplied role models, retaining the deterministic demo when nil.
 func NewWithModels(docs []rag.Document, models map[string]core.LLMClient) *App {
-	retriever := &rag.Retriever{Splitter: rag.RecursiveSplitter{Size: 400, Overlap: 40}, Embedder: rag.HashEmbedder{DimV: 128}, Store: &rag.MemoryStore{}}
-	retriever.Index(docs)
+	retrievers := map[string]*rag.Retriever{}
+	for _, splitter := range []rag.Splitter{rag.FixedSplitter{Size: 40}, rag.RecursiveSplitter{Size: 60, Overlap: 10}} {
+		r := &rag.Retriever{Splitter: splitter, Embedder: rag.HashEmbedder{DimV: 512}, Store: &rag.MemoryStore{}}
+		r.Index(docs)
+		retrievers[splitter.Name()] = r
+	}
 	selectModel := func(role string) core.LLMClient {
 		if models != nil && models[role] != nil {
 			return models[role]
@@ -90,7 +106,7 @@ func NewWithModels(docs []rag.Document, models map[string]core.LLMClient) *App {
 	}
 	runtime := orchestrator.NewOrchestrator(1)
 	runtime.AddAgent(orchestrator.RolePlanner, core.NewAgent("planner", "Return a JSON array of subtasks with id and input fields. No markdown.", selectModel("planner"), nil, 1))
-	runtime.AddAgent(orchestrator.RoleExecutor, core.NewAgent("executor", "Use search_docs for relevant evidence, then answer with its source.", selectModel("executor"), []core.Tool{searchTool{retriever}}, 2))
+	runtime.AddAgent(orchestrator.RoleExecutor, core.NewAgent("executor", "Use search_docs for relevant evidence, then answer with its source.", selectModel("executor"), []core.Tool{searchTool{retrievers}}, 2))
 	runtime.AddAgent(orchestrator.RoleVerifier, core.NewAgent("verifier", "Return JSON with task_id and pass fields. Check the execution result. No markdown.", selectModel("verifier"), nil, 1))
 	return &App{gate: gateway.New(localAuth{}, gateway.InjectionFilter{}, gateway.NewRateLimitFilter(60, time.Minute)), runtime: runtime, traces: map[string]Trace{}, modelMode: models != nil}
 }
@@ -99,8 +115,50 @@ func (a *App) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/chat", a.chat)
 	mux.HandleFunc("GET /v1/traces/{id}", a.trace)
+	mux.HandleFunc("POST /v1/evolve", a.evolve)
 	mux.HandleFunc("GET /health/live", func(w http.ResponseWriter, r *http.Request) { write(w, 200, map[string]string{"status": "ok"}) })
 	return mux
+}
+
+func (a *App) evolve(w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get("Authorization") != "Bearer local-demo" {
+		write(w, 403, map[string]string{"error": "invalid token"})
+		return
+	}
+	if a.manager == nil {
+		write(w, 503, map[string]string{"error": "configuration unavailable"})
+		return
+	}
+	h, err := a.manager.Acquire("kb-agent")
+	if err != nil {
+		write(w, 503, map[string]string{"error": "configuration unavailable"})
+		return
+	}
+	cfg := h.Config()
+	h.Release()
+	if cfg.ChunkStrategy != "fixed" {
+		write(w, 409, map[string]string{"error": "active strategy must be fixed for this experiment"})
+		return
+	}
+	path := a.corpusPath
+	if path == "" {
+		path = "datasets/rag_eval_98.json"
+	}
+	cases, docs, hash, err := evolution.LoadPublicCorpus(path)
+	if err != nil {
+		write(w, 503, map[string]string{"error": "public corpus unavailable"})
+		return
+	}
+	prediction := evolution.Prediction{ExpectedHitRateDeltaMin: 0.10, ExpectedHitRateDeltaMax: 0.25}
+	before, after, decision, err := evolution.ImproveRetrieval(a.manager, "kb-agent", cfg, cases, docs, hash,
+		rag.FixedSplitter{Size: 40}, rag.RecursiveSplitter{Size: 60, Overlap: 10}, prediction)
+	result := map[string]any{"before": before, "after": after, "failures": evolution.DiagnoseRetrieval(before, after),
+		"prediction": prediction, "actual_delta": after.HitRate - before.HitRate, "decision": decision}
+	if err != nil {
+		write(w, 409, result)
+		return
+	}
+	write(w, 200, result)
 }
 
 func (a *App) chat(w http.ResponseWriter, r *http.Request) {
@@ -117,7 +175,19 @@ func (a *App) chat(w http.ResponseWriter, r *http.Request) {
 		write(w, 403, map[string]string{"error": filter + ": " + reason})
 		return
 	}
-	answer, contracts, err := a.runtime.Run(r.Context(), input.Message)
+	ctx := r.Context()
+	var cfg config.Config
+	if a.manager != nil {
+		handle, err := a.manager.Acquire("kb-agent")
+		if err != nil {
+			write(w, 503, map[string]string{"error": "agent configuration unavailable"})
+			return
+		}
+		defer handle.Release()
+		cfg = handle.Config()
+		ctx = context.WithValue(ctx, strategyKey{}, cfg.ChunkStrategy)
+	}
+	answer, contracts, err := a.runtime.Run(ctx, input.Message)
 	if err != nil {
 		write(w, 502, map[string]string{"error": err.Error()})
 		return
@@ -128,7 +198,7 @@ func (a *App) chat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := hex.EncodeToString(bytes[:])
-	trace := Trace{ID: id, Query: input.Message, Answer: answer, Contracts: contracts, CreatedAt: time.Now().UTC()}
+	trace := Trace{ID: id, Query: input.Message, Answer: answer, Contracts: contracts, CreatedAt: time.Now().UTC(), ConfigVersion: cfg.Version, ChunkStrategy: cfg.ChunkStrategy}
 	a.mu.Lock()
 	a.traces[id] = trace
 	a.mu.Unlock()
@@ -176,7 +246,8 @@ func write(w http.ResponseWriter, status int, value any) {
 	_ = json.NewEncoder(w).Encode(value)
 }
 
-type searchTool struct{ retriever *rag.Retriever }
+type strategyKey struct{}
+type searchTool struct{ retrievers map[string]*rag.Retriever }
 
 type localAuth struct{}
 
@@ -197,7 +268,15 @@ func (s searchTool) Call(ctx context.Context, args map[string]any) (string, erro
 	if !ok {
 		return "", fmt.Errorf("query must be string")
 	}
-	results := s.retriever.Retrieve(query, 3)
+	strategy, _ := ctx.Value(strategyKey{}).(string)
+	if strategy == "" {
+		strategy = "recursive"
+	}
+	retriever := s.retrievers[strategy]
+	if retriever == nil {
+		return "", fmt.Errorf("unknown chunk strategy %q", strategy)
+	}
+	results := retriever.Retrieve(query, 3)
 	if len(results) == 0 {
 		return "no indexed documents", nil
 	}

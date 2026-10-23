@@ -35,9 +35,10 @@ func main() {
 		After        evolution.RetrievalRun `json:"after"`
 		Prediction   evolution.Prediction   `json:"prediction"`
 		ActualDelta  float64                `json:"actual_delta"`
+		Failures     []evolution.Failure    `json:"baseline_failures"`
 		Decision     evolution.Decision     `json:"decision"`
 		ActiveConfig config.Config          `json:"active_config"`
-	}{before, after, evolution.Prediction{ExpectedHitRateDeltaMin: 0.10, ExpectedHitRateDeltaMax: 0.25}, after.HitRate - before.HitRate, decision, active.Config()}
+	}{before, after, evolution.Prediction{ExpectedHitRateDeltaMin: 0.10, ExpectedHitRateDeltaMax: 0.25}, after.HitRate - before.HitRate, evolution.DiagnoseRetrieval(before, after), decision, active.Config()}
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
 	if err := enc.Encode(result); err != nil {
