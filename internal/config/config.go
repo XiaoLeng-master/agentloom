@@ -15,12 +15,13 @@ import (
 // Config is a versioned, immutable agent configuration. Reloads create a new
 // Config; the Manager never mutates one in place.
 type Config struct {
-	Version      int // monotonic per name; lets a handle detect it is stale
-	Name         string
-	SystemPrompt string
-	Model        string
-	MaxIter      int
-	Tools        []string
+	Version       int // monotonic per name; lets a handle detect it is stale
+	Name          string
+	SystemPrompt  string
+	Model         string
+	MaxIter       int
+	Tools         []string
+	ChunkStrategy string
 }
 
 // ErrUnknownAgent is returned by Acquire when no config is registered for name.

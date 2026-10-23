@@ -61,10 +61,13 @@ cd agentloom
 make verify      # 格式整理 + vet + 全量 race 测试
 make bench       # 输出当前提交的切分策略 HitRate@K 对比表
 make run         # 启动 HTTP 入口 agentd，监听 :8080
+go run ./cmd/evolve # 离线运行 fixed→recursive 检索复测，输出逐条结果和配置版本
 curl localhost:8080/health   # {"status":"ok","agents":["kb-agent"]}
 ```
 
 > `make run` 提供确定性本地演示；配置 Manager 已初始化，但演示请求尚未从 Manager 获取版本化配置。
+
+`cmd/evolve` 会在相同数据集和语料上计算两次检索命中率，并输出数据哈希、逐条命中、预测区间、实际变化和本地配置版本。当前仅验证检索层；答案质量、安全性、请求 Trace 驱动的自动归因及线上配置生效尚未纳入此命令，因此它不是完整自进化闭环。数字随被索引的仓库文件变化，请以当次运行输出为准。
 
 本地端到端演示（确定性演示模型、内存文档检索；不是在线 LLM 或生产知识库）：
 
