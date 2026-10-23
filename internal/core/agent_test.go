@@ -25,7 +25,7 @@ func (m *mockLLM) Complete(ctx context.Context, _ []Message) (Message, error) {
 // echoTool returns args["msg"] verbatim, or "no msg" when absent/wrong-typed.
 type echoTool struct{}
 
-func (echoTool) Name() string  { return "echo" }
+func (echoTool) Name() string { return "echo" }
 func (echoTool) Schema() map[string]any {
 	return map[string]any{
 		"type": "object",

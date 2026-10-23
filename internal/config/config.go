@@ -31,8 +31,8 @@ var ErrUnknownAgent = errors.New("config: unknown agent")
 // old entry stays alive until its refcount drains to zero.
 type AgentHandle struct {
 	cfg   Config
-	refs  *int32        // points at the entry's refs counter
-	stale *atomic.Bool  // points at the entry's stale flag
+	refs  *int32       // points at the entry's refs counter
+	stale *atomic.Bool // points at the entry's stale flag
 }
 
 // Config returns the config this handle was acquired against.

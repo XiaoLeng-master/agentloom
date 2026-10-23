@@ -38,8 +38,8 @@ type jsonRPCError struct {
 }
 
 type jsonRPCResponse struct {
-	JSONRPC string       `json:"jsonrpc"`
-	ID      int          `json:"id"`
-	Result  any          `json:"result,omitempty"`
+	JSONRPC string        `json:"jsonrpc"`
+	ID      int           `json:"id"`
+	Result  any           `json:"result,omitempty"`
 	Error   *jsonRPCError `json:"error,omitempty"`
 }

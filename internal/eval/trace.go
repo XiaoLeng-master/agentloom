@@ -11,9 +11,9 @@ import "time"
 type EventKind string
 
 const (
-	EventLLM       EventKind = "llm"
-	EventTool      EventKind = "tool"
-	EventRetrieve  EventKind = "retrieve"
+	EventLLM      EventKind = "llm"
+	EventTool     EventKind = "tool"
+	EventRetrieve EventKind = "retrieve"
 )
 
 // Event is one step in an agent run.

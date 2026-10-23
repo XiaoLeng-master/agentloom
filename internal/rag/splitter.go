@@ -117,7 +117,7 @@ func (SemanticSplitter) Split(doc Document) []Chunk {
 // typically favors this strategy because retrieval precision and context
 // completeness are decoupled.
 type ParentChildSplitter struct {
-	ChildSize int
+	ChildSize  int
 	ParentSize int
 }
 

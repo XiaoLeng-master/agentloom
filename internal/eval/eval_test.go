@@ -14,12 +14,12 @@ func TestRegistry_AllEvaluators(t *testing.T) {
 		GEval{},
 	)
 	tr := Trace{
-		ID:     "t1",
-		Query:  "how does ReAct work",
-		Answer: "ReAct loops think act observe",
+		ID:        "t1",
+		Query:     "how does ReAct work",
+		Answer:    "ReAct loops think act observe",
 		Citations: []string{"internal/core/agent.go"},
-		Tools:  []string{"echo"},
-		Events: []Event{{Kind: EventLLM, Latency: 50 * time.Millisecond}},
+		Tools:     []string{"echo"},
+		Events:    []Event{{Kind: EventLLM, Latency: 50 * time.Millisecond}},
 		Expected: Expected{
 			Answer:     "ReAct loops think act observe",
 			Tools:      []string{"echo"},
