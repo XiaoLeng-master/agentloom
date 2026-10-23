@@ -36,6 +36,17 @@ func main() {
 
 	mux := http.NewServeMux()
 	local := app.New([]rag.Document{{Source: "agentloom-demo", Text: "agentloom uses a planner, executor and verifier. The executor can retrieve indexed documentation. This is a local deterministic demonstration."}})
+	if redisAddr := os.Getenv("AGENTLOOM_REDIS_ADDR"); redisAddr != "" {
+		store := app.NewRedisTraceStore(redisAddr, 24*time.Hour)
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		err := store.Ping(ctx)
+		cancel()
+		if err != nil {
+			log.Fatalf("redis trace store unavailable: %v", err)
+		}
+		defer store.Close()
+		local.WithTraceStore(store)
+	}
 	mux.Handle("/v1/", local.Handler())
 	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{

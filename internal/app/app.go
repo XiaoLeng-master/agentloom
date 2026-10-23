@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -30,6 +31,13 @@ type App struct {
 	runtime *orchestrator.Orchestrator
 	mu      sync.RWMutex
 	traces  map[string]Trace
+	store   TraceStore
+}
+
+// WithTraceStore enables persistent traces; New remains dependency-free for the local demo.
+func (a *App) WithTraceStore(store TraceStore) *App {
+	a.store = store
+	return a
 }
 
 func New(docs []rag.Document) *App {
@@ -76,9 +84,16 @@ func (a *App) chat(w http.ResponseWriter, r *http.Request) {
 	}
 	id := hex.EncodeToString(bytes[:])
 	trace := Trace{ID: id, Query: input.Message, Answer: answer, Contracts: contracts, CreatedAt: time.Now().UTC()}
-	a.mu.Lock()
-	a.traces[id] = trace
-	a.mu.Unlock()
+	if a.store != nil {
+		if err := a.store.Save(r.Context(), trace); err != nil {
+			write(w, 503, map[string]string{"error": "trace storage unavailable"})
+			return
+		}
+	} else {
+		a.mu.Lock()
+		a.traces[id] = trace
+		a.mu.Unlock()
+	}
 	write(w, 200, map[string]any{"reply": answer, "trace_id": id, "verification": "passed", "mode": "local-demo"})
 }
 
@@ -87,11 +102,25 @@ func (a *App) trace(w http.ResponseWriter, r *http.Request) {
 		write(w, 403, map[string]string{"error": "invalid token"})
 		return
 	}
-	a.mu.RLock()
-	trace, ok := a.traces[r.PathValue("id")]
-	a.mu.RUnlock()
-	if !ok {
+	var trace Trace
+	var err error
+	if a.store != nil {
+		trace, err = a.store.Get(r.Context(), r.PathValue("id"))
+	} else {
+		a.mu.RLock()
+		var ok bool
+		trace, ok = a.traces[r.PathValue("id")]
+		a.mu.RUnlock()
+		if !ok {
+			err = ErrTraceNotFound
+		}
+	}
+	if errors.Is(err, ErrTraceNotFound) {
 		write(w, 404, map[string]string{"error": "trace not found"})
+		return
+	}
+	if err != nil {
+		write(w, 503, map[string]string{"error": "trace storage unavailable"})
 		return
 	}
 	write(w, 200, trace)

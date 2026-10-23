@@ -47,7 +47,7 @@ agentloom 把这三件事做在同一套平台里，并且**让每一环都咬�
 | **评测 harness** | Trace + 规则代理评测器 + 词法测试 Prober + Markdown 报告；真实 Judge 尚未接入 | 🚧 |
 | **网关治理链** | Filter Chain：本地演示 token、关键词注入信号、单机租户限流 | 🚧 |
 | **插件化运行时** | IoC 生命周期：planner/memory/tool/evaluator 可热插拔，mount/reload/dispose 不重置 agent 状态 | ✅ |
-| **后端底座** | 内存 Trace 队列、按月分组及内存缓存；尚无持久化、Kafka 或 DLQ | 🚧 |
+| **后端底座** | 可选 Redis 持久化演示 Trace；内存队列、按月分组及内存缓存；Kafka、etcd、Milvus 与 DLQ 尚未接入 | 🚧 |
 
 > ✅ = 已实现且有测试 / 🚧 = 组件就位，运行时串联推进中 / 📋 = 设计完成待实现
 
@@ -76,7 +76,7 @@ curl -H 'Authorization: Bearer local-demo' -H 'Content-Type: application/json' \
 curl -H 'Authorization: Bearer local-demo' localhost:8080/v1/traces/<trace_id>
 ```
 
-演示链路经过本地网关、Planner、Executor 的 RAG Tool 和 Verifier，Trace 暂存进程内；远端 MCP、真实模型、批量评测及持久化尚未接入这个入口。
+演示链路经过本地网关、Planner、Executor 的 RAG Tool 和 Verifier。默认 Trace 暂存进程内；如需跨进程保留演示 Trace，可执行 `docker compose up -d redis`，再设置 `AGENTLOOM_REDIS_ADDR=127.0.0.1:16379` 启动服务。Redis 不可用时服务启动会报错，不会悄悄退回内存。远端 MCP、真实模型及批量评测尚未接入此入口；Kafka、etcd、Milvus 仍未落地。
 
 环境：
 - Go 1.22+
