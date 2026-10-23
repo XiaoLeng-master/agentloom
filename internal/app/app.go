@@ -138,10 +138,31 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/chat", a.chat)
 	mux.HandleFunc("GET /v1/traces/{id}", a.trace)
 	mux.HandleFunc("POST /v1/evolve", a.evolve)
+	mux.HandleFunc("GET /v1/bench", a.bench)
 	mux.HandleFunc("GET /v1/evolutions", a.evolutions)
 	mux.HandleFunc("GET /v1/evolutions/{id}", a.experiment)
 	mux.HandleFunc("GET /health/live", func(w http.ResponseWriter, r *http.Request) { write(w, 200, map[string]string{"status": "ok"}) })
 	return mux
+}
+
+func (a *App) bench(w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get("Authorization") != "Bearer local-demo" {
+		write(w, 403, map[string]string{"error": "invalid token"})
+		return
+	}
+	path := a.corpusPath
+	if path == "" {
+		path = "datasets/rag_eval_98.json"
+	}
+	cases, docs, hash, err := evolution.LoadPublicCorpus(path)
+	if err != nil {
+		write(w, 503, map[string]string{"error": "public corpus unavailable"})
+		return
+	}
+	before := evolution.RunRetrieval(cases, docs, hash, rag.FixedSplitter{Size: 40})
+	after := evolution.RunRetrieval(cases, docs, hash, rag.RecursiveSplitter{Size: 60, Overlap: 10})
+	write(w, 200, map[string]any{"before": before, "after": after, "failures": evolution.DiagnoseRetrieval(before, after),
+		"actual_delta": after.HitRate - before.HitRate, "answer_quality": "not_evaluated"})
 }
 
 func (a *App) evolve(w http.ResponseWriter, r *http.Request) {

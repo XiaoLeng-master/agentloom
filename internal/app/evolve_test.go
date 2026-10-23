@@ -27,6 +27,21 @@ func TestExperimentChangesSubsequentTraceVersion(t *testing.T) {
 	mgr := config.NewManager()
 	mgr.Register("kb-agent", config.Config{Name: "kb-agent", SystemPrompt: "demo", ChunkStrategy: "fixed"})
 	a := New([]rag.Document{{Source: "guide", Text: "agentloom planner executor verifier guide"}}).WithConfigManager(mgr).WithCorpusPath(dataset).WithExperimentHistory(filepath.Join(dir, "history"))
+	bench := httptest.NewRequest(http.MethodGet, "/v1/bench", nil)
+	bench.Header.Set("Authorization", "Bearer local-demo")
+	preview := httptest.NewRecorder()
+	a.Handler().ServeHTTP(preview, bench)
+	if preview.Code != 200 || !strings.Contains(preview.Body.String(), `"answer_quality":"not_evaluated"`) {
+		t.Fatalf("bench %d: %s", preview.Code, preview.Body.String())
+	}
+	active, err := mgr.Acquire("kb-agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if active.Config().Version != 1 || active.Config().ChunkStrategy != "fixed" {
+		t.Fatalf("bench mutated config: %+v", active.Config())
+	}
+	active.Release()
 	chat := func() Trace {
 		req := httptest.NewRequest(http.MethodPost, "/v1/chat", strings.NewReader(`{"message":"planner"}`))
 		req.Header.Set("Authorization", "Bearer local-demo")
