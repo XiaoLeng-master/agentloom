@@ -85,6 +85,46 @@ func TestConsumeRespectsContext(t *testing.T) {
 	}
 }
 
+func TestCloseDrainsAcceptedEvents(t *testing.T) {
+	q := NewToyQueue(128)
+	var producers sync.WaitGroup
+	for i := 0; i < 64; i++ {
+		producers.Add(1)
+		go func() { defer producers.Done(); _ = q.Push([]byte("trace")) }()
+	}
+	producers.Wait()
+	q.Close()
+	q.Close()
+	if err := q.Push([]byte("late")); !errors.Is(err, ErrQueueClosed) {
+		t.Fatalf("late Push: %v", err)
+	}
+	var received int
+	if err := q.Consume(context.Background(), 7, func(batch [][]byte) { received += len(batch) }); err != nil {
+		t.Fatal(err)
+	}
+	if received != 64 {
+		t.Fatalf("received %d/64", received)
+	}
+}
+
+func TestConcurrentCloseAndPush(t *testing.T) {
+	q := NewToyQueue(128)
+	var wg sync.WaitGroup
+	for i := 0; i < 100; i++ {
+		wg.Add(1)
+		go func() { defer wg.Done(); _ = q.Push([]byte("x")) }()
+	}
+	q.Close()
+	wg.Wait()
+	var received int
+	if err := q.Consume(context.Background(), 8, func(batch [][]byte) { received += len(batch) }); err != nil {
+		t.Fatal(err)
+	}
+	if received > 100 {
+		t.Fatalf("received %d", received)
+	}
+}
+
 func TestMonthlySharderRouting(t *testing.T) {
 	s := NewMonthlySharder()
 	oct1 := time.Date(2026, 10, 5, 10, 0, 0, 0, time.UTC)

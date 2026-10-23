@@ -29,14 +29,17 @@ import (
 // treat this as "drop + count", not "retry synchronously" — retrying would
 // block the session main loop, which is exactly what the queue exists to avoid.
 var ErrQueueFull = errors.New("toyqueue: full, event dropped")
+var ErrQueueClosed = errors.New("toyqueue: closed")
 
 // ToyQueue is the in-memory analogue of a Kafka topic. Producers Push events
 // without blocking; a single Consume loop drains them in batches and hands
 // each batch to a handler. Drops (when the buffer fills under burst) are
 // counted so the eval report can surface "X% Trace loss".
 type ToyQueue struct {
-	ch       chan []byte
-	dropped  int32 // atomic; events lost to Push when full
+	mu      sync.RWMutex
+	ch      chan []byte
+	dropped int32 // atomic; events lost to Push when full
+	closed  bool
 }
 
 // NewToyQueue returns a queue with the given buffer size. A small buffer
@@ -53,12 +56,28 @@ func NewToyQueue(buf int) *ToyQueue {
 // buffer is full; the caller should increment its own drop counter and
 // continue (NOT retry inline).
 func (q *ToyQueue) Push(event []byte) error {
+	q.mu.RLock()
+	defer q.mu.RUnlock()
+	if q.closed {
+		return ErrQueueClosed
+	}
 	select {
 	case q.ch <- event:
 		return nil
 	default:
 		atomic.AddInt32(&q.dropped, 1)
 		return ErrQueueFull
+	}
+}
+
+// Close stops producers and lets Consume deliver every accepted event before exit.
+// A caller must wait for its consumer to return to know the drain is complete.
+func (q *ToyQueue) Close() {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if !q.closed {
+		q.closed = true
+		close(q.ch)
 	}
 }
 
@@ -89,10 +108,27 @@ func (q *ToyQueue) Consume(ctx context.Context, batchSize int, handler func(batc
 			}
 			batch = append(batch, ev)
 		case <-ctx.Done():
-			if len(batch) > 0 {
-				handler(batch)
+			for {
+				select {
+				case ev, ok := <-q.ch:
+					if !ok {
+						if len(batch) > 0 {
+							handler(batch)
+						}
+						return ctx.Err()
+					}
+					batch = append(batch, ev)
+					if len(batch) == batchSize {
+						handler(batch)
+						batch = batch[:0]
+					}
+				default:
+					if len(batch) > 0 {
+						handler(batch)
+					}
+					return ctx.Err()
+				}
 			}
-			return ctx.Err()
 		}
 		// Non-blocking drain to fill the batch.
 		for len(batch) < batchSize {
