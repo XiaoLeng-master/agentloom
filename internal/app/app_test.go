@@ -78,12 +78,35 @@ func TestChatTraceFlow(t *testing.T) {
 	}
 }
 
-func TestChatRequiresDemoToken(t *testing.T) {
+func TestPublicModeAllowsChatButProtectsEvolution(t *testing.T) {
 	handler := New(nil).Handler()
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat", strings.NewReader(`{"message":"hello"}`))
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
+	if rec.Code != 200 {
+		t.Fatalf("chat status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	req = httptest.NewRequest(http.MethodPost, "/v1/evolve", nil)
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
 	if rec.Code != 403 {
-		t.Fatalf("status=%d", rec.Code)
+		t.Fatalf("evolve status=%d", rec.Code)
+	}
+}
+
+func TestConfiguredPublicTokenIsRequired(t *testing.T) {
+	handler := New(nil).WithAccessPolicy(AccessPolicy{PublicMode: true, PublicToken: "public", AdminToken: "admin"}).Handler()
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat", strings.NewReader(`{"message":"hello"}`))
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != 403 {
+		t.Fatalf("missing token status=%d", rec.Code)
+	}
+	req = httptest.NewRequest(http.MethodPost, "/v1/chat", strings.NewReader(`{"message":"hello"}`))
+	req.Header.Set("Authorization", "Bearer public")
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != 200 {
+		t.Fatalf("public token status=%d body=%s", rec.Code, rec.Body.String())
 	}
 }
