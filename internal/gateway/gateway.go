@@ -1,8 +1,11 @@
 // Package gateway implements the request filter chain that sits in front of
 // the Agent runtime: authentication, prompt-injection detection, and
 // per-tenant rate limiting. Filters are ordered and pluggable; the first
-// denial stops the chain. This is the "total control plane" that multi-agent
-// collaboration and the eval harness gray-rollout both run through.
+// denial stops the chain. ConcurrencyAdmission is separate from that chain:
+// it is a two-level (global and per-tenant or per-agent) concurrency quota
+// that queues instead of rejecting immediately, because the slot has to be
+// held until the handler finishes. This is the "total control plane" that
+// multi-agent collaboration and the eval harness gray-rollout both run through.
 package gateway
 
 import "context"
