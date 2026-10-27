@@ -85,7 +85,7 @@ go test -run TestQueueBurstThenDrain -v ./internal/infra/
 **旁白要点**：
 - ToyQueue 模拟 Kafka 削峰：session 主链路 Push 不阻塞，满则丢弃+计数
 - MonthlySharder 按时间戳 YYYY-MM 路由，eval 报告能查"某月的 trace"
-- 生产换真 Kafka，路由键不变
+- 配置 `AGENTLOOM_KAFKA_BROKERS` 后走同一路由键，见 `docs/09-kafka-trace.md`
 
 ### 镜 7 · 收尾 + 仓库导览（15s）
 

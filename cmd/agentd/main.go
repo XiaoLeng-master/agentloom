@@ -14,12 +14,15 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/XiaoLeng-master/agentloom/internal/app"
 	"github.com/XiaoLeng-master/agentloom/internal/config"
 	"github.com/XiaoLeng-master/agentloom/internal/core"
+	"github.com/XiaoLeng-master/agentloom/internal/infra"
 	"github.com/XiaoLeng-master/agentloom/internal/rag"
 	"github.com/XiaoLeng-master/agentloom/web"
 )
@@ -82,7 +85,40 @@ func main() {
 	if publicMode {
 		local.WithAccessPolicy(app.AccessPolicy{PublicMode: true, PublicToken: publicToken, AdminToken: adminToken}).WithMaxConcurrentChats(4)
 	}
-	if redisAddr := os.Getenv("AGENTLOOM_REDIS_ADDR"); redisAddr != "" {
+	if brokers := infra.SplitBrokers(os.Getenv("AGENTLOOM_KAFKA_BROKERS")); len(brokers) > 0 {
+		dbPath := os.Getenv("AGENTLOOM_TRACE_DB")
+		if dbPath == "" {
+			dbPath = ".agentloom/traces.db"
+		}
+		db, err := infra.OpenMonthDB(dbPath)
+		if err != nil {
+			log.Fatalf("trace month db: %v", err)
+		}
+		defer db.Close()
+		attempts := 3
+		if raw := os.Getenv("AGENTLOOM_KAFKA_ATTEMPTS"); raw != "" {
+			n, err := strconv.Atoi(raw)
+			if err != nil || n < 1 {
+				log.Fatal("AGENTLOOM_KAFKA_ATTEMPTS must be a positive integer")
+			}
+			attempts = n
+		}
+		cfg := infra.ApplyKafkaDefaults(infra.KafkaConfig{
+			Brokers:  brokers,
+			Topic:    os.Getenv("AGENTLOOM_KAFKA_TOPIC"),
+			DLQTopic: os.Getenv("AGENTLOOM_KAFKA_DLQ_TOPIC"),
+			GroupID:  os.Getenv("AGENTLOOM_KAFKA_GROUP"),
+			Attempts: attempts,
+			DB:       db,
+		})
+		queue, err := infra.NewKafkaQueue(cfg)
+		if err != nil {
+			log.Fatalf("kafka trace queue: %v", err)
+		}
+		queue.SetHandleDelay(durationEnv("AGENTLOOM_TRACE_HANDLE_DELAY", 0))
+		local.WithKafkaQueue(queue)
+		log.Printf("trace pipeline: kafka brokers=%s topic=%s dlq=%s group=%s", strings.Join(cfg.Brokers, ","), cfg.Topic, cfg.DLQTopic, cfg.GroupID)
+	} else if redisAddr := os.Getenv("AGENTLOOM_REDIS_ADDR"); redisAddr != "" {
 		store := app.NewRedisTraceStore(redisAddr, 24*time.Hour)
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		err := store.Ping(ctx)
@@ -118,6 +154,18 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = srv.Shutdown(ctx)
+}
+
+func durationEnv(name string, fallback time.Duration) time.Duration {
+	raw := os.Getenv(name)
+	if raw == "" {
+		return fallback
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d < 0 {
+		log.Fatalf("%s must be a non-negative duration", name)
+	}
+	return d
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {

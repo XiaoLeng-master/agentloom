@@ -30,4 +30,4 @@ make run
 
 - 当前质量评测是 `deterministic_proxy`，用于复现检索上下文、引用和词法重合；尚未接入真实 LLM Judge。
 - Trace 已可查询并异步写入内存或 Redis，但尚未实现 Trace 触发的自动批评测、灰度发布和自动回滚。
-- Kafka、etcd、Milvus、用户系统、多租户和生产级密钥管理不属于当前公开演示的已交付范围。
+- Kafka 为可选本机组件：未设置 `AGENTLOOM_KAFKA_BROKERS` 时 Trace 仍走内存队列或 Redis，设置后的启动方式见 `docs/09-kafka-trace.md`。etcd、Milvus、用户系统、多租户和密钥管理不属于当前公开演示的已交付范围。

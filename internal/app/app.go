@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"sync"
@@ -54,6 +55,8 @@ type App struct {
 	traces     map[string]Trace
 	store      TraceStore
 	queue      *infra.ToyQueue
+	kafka      *infra.KafkaQueue
+	stopKafka  context.CancelFunc
 	worker     chan struct{}
 	failed     atomic.Int64
 	modelMode  bool
@@ -113,11 +116,30 @@ func (a *App) WithTraceStore(store TraceStore) *App {
 	return a
 }
 
+// WithKafkaQueue consumes AGENTLOOM_KAFKA_BROKERS when that variable is set.
+// The in-memory trace map is still written before Push returns.
+func (a *App) WithKafkaQueue(q *infra.KafkaQueue) *App {
+	a.kafka = q
+	ctx, cancel := context.WithCancel(context.Background())
+	a.stopKafka = cancel
+	a.worker = make(chan struct{})
+	go func() {
+		defer close(a.worker)
+		_ = q.Run(ctx)
+	}()
+	return a
+}
+
 // Close drains accepted trace events before the backing store is closed.
 func (a *App) Close() {
 	if a.queue != nil {
 		a.queue.Close()
 		<-a.worker
+	}
+	if a.stopKafka != nil {
+		a.stopKafka()
+		<-a.worker
+		_ = a.kafka.Close()
 	}
 }
 
@@ -154,6 +176,8 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/bench", a.bench)
 	mux.HandleFunc("GET /v1/evolutions", a.evolutions)
 	mux.HandleFunc("GET /v1/evolutions/{id}", a.experiment)
+	mux.HandleFunc("GET /v1/trace-pipeline", a.tracePipeline)
+	mux.HandleFunc("POST /v1/trace-pipeline", a.enqueueTrace)
 	mux.HandleFunc("GET /health/live", func(w http.ResponseWriter, r *http.Request) { write(w, 200, map[string]string{"status": "ok"}) })
 	return mux
 }
@@ -322,15 +346,56 @@ func (a *App) chat(w http.ResponseWriter, r *http.Request) {
 	a.mu.Lock()
 	a.traces[id] = trace
 	a.mu.Unlock()
-	if a.queue != nil {
-		data, _ := json.Marshal(trace)
-		_ = a.queue.Push(data)
+	if data, err := json.Marshal(trace); err == nil {
+		if a.kafka != nil {
+			_ = a.kafka.Push(data)
+		} else if a.queue != nil {
+			_ = a.queue.Push(data)
+		}
 	}
 	mode := "local-demo"
 	if a.modelMode {
 		mode = "deepseek"
 	}
 	write(w, 200, map[string]any{"reply": answer, "trace_id": id, "verification": "passed", "mode": mode})
+}
+
+func (a *App) enqueueTrace(w http.ResponseWriter, r *http.Request) {
+	if !a.access.publicAllowed(r) {
+		write(w, 403, map[string]string{"error": "invalid token"})
+		return
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	if err != nil || len(body) == 0 {
+		write(w, 400, map[string]string{"error": "trace payload required"})
+		return
+	}
+	if a.kafka == nil {
+		write(w, 409, map[string]string{"error": "kafka pipeline disabled"})
+		return
+	}
+	if err := a.kafka.Push(body); err != nil {
+		write(w, 503, map[string]string{"error": err.Error()})
+		return
+	}
+	write(w, 202, map[string]string{"status": "queued"})
+}
+
+func (a *App) tracePipeline(w http.ResponseWriter, r *http.Request) {
+	if !a.access.publicAllowed(r) {
+		write(w, 403, map[string]string{"error": "invalid token"})
+		return
+	}
+	if a.kafka != nil {
+		write(w, 200, a.kafka.Stats())
+		return
+	}
+	st := infra.PipelineStats{Backend: "memory", Enabled: false}
+	if a.queue != nil {
+		st.Backend = "toyqueue"
+		st.Dropped = int64(a.queue.Dropped())
+	}
+	write(w, 200, st)
 }
 
 func (a *App) trace(w http.ResponseWriter, r *http.Request) {
