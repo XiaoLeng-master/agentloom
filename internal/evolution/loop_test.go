@@ -331,16 +331,28 @@ func TestClosedLoopPublic98(t *testing.T) {
 		t.Fatalf("predictions not distinct: %v", predictions)
 	}
 	if report.Promoted != nil {
+		if report.Promoted.Stage != "canary" || report.Promoted.Percent != 10 || report.Rollout == nil || report.Rollout.Kind != RolloutCanary {
+			t.Fatalf("promoted=%+v rollout=%+v", report.Promoted, report.Rollout)
+		}
 		active, err := mgr.Acquire("kb-agent")
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer active.Release()
-		if active.Config().Version != report.Promoted.Version || active.Config().Version < 2 {
-			t.Fatalf("active=%+v promoted=%+v", active.Config(), report.Promoted)
+		if active.Config().Version != 1 || active.Config().SystemPrompt == "" {
+			t.Fatalf("stable acquire changed: %+v", active.Config())
 		}
-		if active.Config().ChunkStrategy == "" || active.Config().SystemPrompt == "" {
-			t.Fatalf("active=%+v", active.Config())
+		tenant, ok := config.TenantForBucket(0)
+		if !ok {
+			t.Fatal("missing canary tenant")
+		}
+		canary, err := mgr.AcquireTenant("kb-agent", tenant)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer canary.Release()
+		if canary.Config().Version != report.Promoted.Version || canary.Config().Version < 2 || canary.Config().SystemPrompt == "" {
+			t.Fatalf("canary=%+v promoted=%+v", canary.Config(), report.Promoted)
 		}
 	}
 	md := report.Markdown()

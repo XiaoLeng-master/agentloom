@@ -14,18 +14,19 @@ import (
 
 // Experiment records a single retrieval comparison and its gate decision.
 type Experiment struct {
-	ID            string       `json:"id"`
-	CreatedAt     time.Time    `json:"created_at"`
-	Before        RetrievalRun `json:"before"`
-	After         RetrievalRun `json:"after"`
-	Failures      []Failure    `json:"failures"`
-	Prediction    Prediction   `json:"prediction"`
-	ActualDelta   float64      `json:"actual_delta"`
-	Decision      Decision     `json:"decision"`
-	AnswerQuality string       `json:"answer_quality"`
-	Tasks         []TaskRecord `json:"tasks,omitempty"`
-	CauseCounts   []CauseCount `json:"cause_counts,omitempty"`
-	Promoted      *Promotion   `json:"promoted,omitempty"`
+	ID            string        `json:"id"`
+	CreatedAt     time.Time     `json:"created_at"`
+	Before        RetrievalRun  `json:"before"`
+	After         RetrievalRun  `json:"after"`
+	Failures      []Failure     `json:"failures"`
+	Prediction    Prediction    `json:"prediction"`
+	ActualDelta   float64       `json:"actual_delta"`
+	Decision      Decision      `json:"decision"`
+	AnswerQuality string        `json:"answer_quality"`
+	Tasks         []TaskRecord  `json:"tasks,omitempty"`
+	CauseCounts   []CauseCount  `json:"cause_counts,omitempty"`
+	Promoted      *Promotion    `json:"promoted,omitempty"`
+	Rollout       *RolloutEvent `json:"rollout,omitempty"`
 }
 
 // NewExperiment gives each run a random identity and explicit quality boundary.
@@ -80,6 +81,7 @@ func NewLoopExperiment(report LoopReport) (Experiment, error) {
 		Prediction: prediction, ActualDelta: actual, Decision: decision,
 		AnswerQuality: fmt.Sprintf("deterministic_proxy:%.4f", report.Baseline.Metrics.Quality),
 		Tasks:         tasks, CauseCounts: report.CauseCounts, Promoted: report.Promoted,
+		Rollout: report.Rollout,
 	}, nil
 }
 
@@ -93,14 +95,60 @@ func (h History) Save(exp Experiment) error {
 	if len(exp.ID) != 32 {
 		return fmt.Errorf("invalid experiment id")
 	}
-	if err := os.MkdirAll(h.Dir, 0700); err != nil {
+	return writeJSONFile(h.Dir, exp.ID+".json", exp)
+}
+
+// SaveRollout writes a canary, ramp, or rollback event under Dir/rollouts.
+// The subdirectory keeps List from treating rollout files as experiments.
+func (h History) SaveRollout(event RolloutEvent) error {
+	if len(event.ID) != 32 {
+		return fmt.Errorf("invalid rollout id")
+	}
+	return writeJSONFile(filepath.Join(h.Dir, "rollouts"), event.ID+".json", event)
+}
+
+// ListRollouts returns canary, ramp, and rollback events newest first.
+func (h History) ListRollouts() ([]RolloutEvent, error) {
+	dir := filepath.Join(h.Dir, "rollouts")
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return []RolloutEvent{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var out []RolloutEvent
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+			continue
+		}
+		id := entry.Name()[:len(entry.Name())-5]
+		data, err := os.ReadFile(filepath.Join(dir, entry.Name()))
+		if err != nil {
+			return nil, err
+		}
+		var event RolloutEvent
+		if err := json.Unmarshal(data, &event); err != nil {
+			return nil, err
+		}
+		if event.ID != id {
+			return nil, fmt.Errorf("rollout id mismatch")
+		}
+		out = append(out, event)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
+	return out, nil
+}
+
+func writeJSONFile(dir, name string, v any) error {
+	if err := os.MkdirAll(dir, 0700); err != nil {
 		return err
 	}
-	data, err := json.MarshalIndent(exp, "", "  ")
+	data, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(h.Dir, ".experiment-*")
+	tmp, err := os.CreateTemp(dir, ".tmp-*")
 	if err != nil {
 		return err
 	}
@@ -112,7 +160,7 @@ func (h History) Save(exp Experiment) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmp.Name(), filepath.Join(h.Dir, exp.ID+".json"))
+	return os.Rename(tmp.Name(), filepath.Join(dir, name))
 }
 
 // Get reads a saved experiment by ID.

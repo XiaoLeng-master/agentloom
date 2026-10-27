@@ -12,11 +12,11 @@ var ErrRejected = errors.New("evolution: candidate rejected")
 
 // Result represents metrics from the same fixed case set for one candidate.
 type Result struct {
-	Cases             int
-	HitRate           float64
-	Quality           float64
-	ToolSuccess       float64
-	NewUnsafeFailures int
+	Cases             int     `json:"cases"`
+	HitRate           float64 `json:"hit_rate"`
+	Quality           float64 `json:"quality"`
+	ToolSuccess       float64 `json:"tool_success"`
+	NewUnsafeFailures int     `json:"new_unsafe_failures"`
 }
 
 // Prediction records a hypothesis declared before candidate evaluation.

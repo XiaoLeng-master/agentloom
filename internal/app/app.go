@@ -205,6 +205,7 @@ func (a *App) evolve(w http.ResponseWriter, r *http.Request) {
 		Baseline:    evolution.PolicyForStrategy(cfg.ChunkStrategy),
 		Manager:     a.manager,
 		AgentName:   "kb-agent",
+		History:     a.history,
 	})
 	if err != nil {
 		write(w, 500, map[string]string{"error": err.Error()})
@@ -279,9 +280,13 @@ func (a *App) chat(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	retrievals := &retrievalLog{}
 	ctx = context.WithValue(ctx, retrievalKey{}, retrievals)
+	tenant := r.Header.Get("X-Tenant")
+	if tenant == "" {
+		tenant = "local"
+	}
 	var cfg config.Config
 	if a.manager != nil {
-		handle, err := a.manager.Acquire("kb-agent")
+		handle, err := a.manager.AcquireTenant("kb-agent", tenant)
 		if err != nil {
 			write(w, 503, map[string]string{"error": "agent configuration unavailable"})
 			return

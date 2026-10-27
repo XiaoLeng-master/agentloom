@@ -17,6 +17,7 @@ type LoopOptions struct {
 	Baseline    Policy
 	Manager     *config.Manager
 	AgentName   string
+	History     *History
 }
 
 // CandidateResult is the automatic retest of one optimization task.
@@ -37,6 +38,8 @@ type Promotion struct {
 	PromptMode    string `json:"prompt_mode"`
 	ToolMode      string `json:"tool_mode"`
 	TopK          int    `json:"top_k"`
+	Percent       int    `json:"percent,omitempty"`
+	Stage         string `json:"stage,omitempty"`
 }
 
 // LoopReport is the end-to-end record of evaluate, attribute, optimize, and retest.
@@ -50,6 +53,7 @@ type LoopReport struct {
 	Tasks       []TaskRecord      `json:"tasks"`
 	CauseCounts []CauseCount      `json:"cause_counts"`
 	Promoted    *Promotion        `json:"promoted,omitempty"`
+	Rollout     *RolloutEvent     `json:"rollout,omitempty"`
 	Notes       []string          `json:"notes"`
 }
 
@@ -70,7 +74,8 @@ type TaskRecord struct {
 }
 
 // RunLoop evaluates the fixed set, clusters failures, generates candidates,
-// retests each candidate, and promotes the best one that passes the gate.
+// and retests each candidate. A gate pass starts a canary instead of reloading
+// the stable config for every request.
 func RunLoop(opts LoopOptions) (LoopReport, error) {
 	if len(opts.Cases) == 0 {
 		return LoopReport{}, fmt.Errorf("empty evaluation set")
@@ -103,7 +108,7 @@ func RunLoop(opts LoopOptions) (LoopReport, error) {
 			"每条样本另外经过 prompt / rag / skill / agent 四个规则评测器。PromptEvaluator 的空白分词 Jaccard 不参与分层，因为公开集以中文为主。",
 			"预测区间在复测之前由该层失败占比声明，复测之后才记录实际增量是否落在区间内。",
 			"未调用外部 LLM 或付费 API。执行器是确定性替身：echo 复述检索片段，concise 按问句重合抽取短句。",
-			"本命令只做离线复测和本地配置替换，不灰度、不写 etcd、不自动回滚。",
+			"门禁通过后只把候选放进进程内灰度，不整进程 Reload，不写 etcd。放量和回滚由后续观测窗口决定。",
 		},
 	}
 	if baseReport.Metrics.FailuresByLayer[LayerTool] == 0 {
@@ -115,7 +120,6 @@ func RunLoop(opts LoopOptions) (LoopReport, error) {
 	}
 	baseGate := baseReport.Metrics.GateResult(0)
 	var best *CandidateResult
-	var bestNext Result
 	for _, task := range tasks {
 		policy := task.Apply(baseline)
 		after := scoreBatch(opts.Cases, opts.DatasetHash, policy, cache.get(policy))
@@ -148,7 +152,6 @@ func RunLoop(opts LoopOptions) (LoopReport, error) {
 		if decision.Passed && (best == nil || betterCandidate(candidate, *best)) {
 			copy := candidate
 			best = &copy
-			bestNext = nextGate
 		}
 	}
 	if best == nil {
@@ -156,7 +159,7 @@ func RunLoop(opts LoopOptions) (LoopReport, error) {
 		return report, nil
 	}
 	if opts.Manager == nil {
-		report.Notes = append(report.Notes, "有候选通过门禁，但没有配置管理器，因此没有替换本地配置。")
+		report.Notes = append(report.Notes, "有候选通过门禁，但没有配置管理器，因此没有进入灰度。")
 		report.Promoted = &Promotion{
 			TaskID:        best.Task.ID,
 			ChunkStrategy: best.Task.SplitterName,
@@ -174,24 +177,24 @@ func RunLoop(opts LoopOptions) (LoopReport, error) {
 		TopK:          best.Task.TopK,
 		Tools:         []string{"search_docs"},
 	}
-	decision, err := Promote(opts.Manager, opts.AgentName, cfg, baseGate, bestNext, best.Task.Prediction)
+	rollout := NewRollout(opts.Manager, opts.AgentName)
+	rollout.History = opts.History
+	event, err := rollout.Start(cfg)
 	if err != nil {
 		return report, err
 	}
-	for i := range report.Candidates {
-		if report.Candidates[i].Task.ID == best.Task.ID {
-			report.Candidates[i].Gate = decision
-			break
-		}
-	}
+	report.Rollout = &event
 	report.Promoted = &Promotion{
 		TaskID:        best.Task.ID,
-		Version:       decision.Version,
+		Version:       event.CanaryVersion,
 		ChunkStrategy: best.Task.SplitterName,
 		PromptMode:    best.Task.PromptMode,
 		ToolMode:      best.Task.ToolMode,
 		TopK:          best.Task.TopK,
+		Percent:       event.Percent,
+		Stage:         "canary",
 	}
+	report.Notes = append(report.Notes, "候选已进入灰度，没有整进程 Reload。未命中租户哈希桶的请求继续使用稳定配置；在途请求保持拿到时的配置。放量和回滚要等观测窗口。")
 	return report, nil
 }
 

@@ -65,14 +65,15 @@ type entry struct {
 
 // Manager owns the active config per agent name and performs hot-reload swaps.
 type Manager struct {
-	mu      sync.RWMutex
-	active  map[string]*entry
-	drained map[string][]*entry // superseded entries awaiting drain
+	mu       sync.RWMutex
+	active   map[string]*entry
+	drained  map[string][]*entry // superseded entries awaiting drain
+	canaries map[string]*canarySlot
 }
 
 // NewManager returns an empty Manager.
 func NewManager() *Manager {
-	return &Manager{active: make(map[string]*entry), drained: make(map[string][]*entry)}
+	return &Manager{active: make(map[string]*entry), drained: make(map[string][]*entry), canaries: make(map[string]*canarySlot)}
 }
 
 // Register installs the initial config for name. Use Reload to update it.
@@ -93,8 +94,7 @@ func (m *Manager) Acquire(name string) (*AgentHandle, error) {
 	if !ok {
 		return nil, ErrUnknownAgent
 	}
-	atomic.AddInt32(&e.refs, 1)
-	return &AgentHandle{cfg: e.cfg, refs: &e.refs, stale: &e.stale}, nil
+	return acquireEntry(e), nil
 }
 
 // Reload installs a new config for name and supersedes the previous one. New
