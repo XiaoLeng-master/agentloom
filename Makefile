@@ -1,4 +1,4 @@
-.PHONY: run bench eval test verify fmt vet tidy docker-up
+.PHONY: run bench loop eval test verify fmt vet tidy docker-up
 
 GO ?= go
 
@@ -7,6 +7,9 @@ run:        ## 启动 HTTP 入口（agentd, :8080）
 
 bench:      ## 跑切分策略 benchmark，输出 HitRate@K 表
 	$(GO) run ./cmd/bench
+
+loop:       ## 评测—归因—优化—复测门禁（确定性本地替身，98 条）
+	$(GO) run ./cmd/loop
 
 verify:     ## 一键自证：格式化 + 静态检查 + 全量测试（含 race）
 	$(GO) fmt ./...

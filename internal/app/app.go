@@ -31,6 +31,8 @@ type Trace struct {
 	CreatedAt     time.Time               `json:"created_at"`
 	ConfigVersion int                     `json:"config_version,omitempty"`
 	ChunkStrategy string                  `json:"chunk_strategy,omitempty"`
+	PromptMode    string                  `json:"prompt_mode,omitempty"`
+	TopK          int                     `json:"top_k,omitempty"`
 	Retrievals    []RetrievalEvidence     `json:"retrievals,omitempty"`
 }
 
@@ -128,7 +130,12 @@ func New(docs []rag.Document) *App {
 // NewWithModels uses supplied role models, retaining the deterministic demo when nil.
 func NewWithModels(docs []rag.Document, models map[string]core.LLMClient) *App {
 	retrievers := map[string]*rag.Retriever{}
-	for _, splitter := range []rag.Splitter{rag.FixedSplitter{Size: 40}, rag.RecursiveSplitter{Size: 60, Overlap: 10}} {
+	for _, splitter := range []rag.Splitter{
+		rag.FixedSplitter{Size: 40},
+		rag.RecursiveSplitter{Size: 60, Overlap: 10},
+		rag.SemanticSplitter{},
+		rag.ParentChildSplitter{ChildSize: 20, ParentSize: 80},
+	} {
 		r := &rag.Retriever{Splitter: splitter, Embedder: rag.HashEmbedder{DimV: 512}, Store: &rag.MemoryStore{}}
 		r.Index(docs)
 		retrievers[splitter.Name()] = r
@@ -194,23 +201,29 @@ func (a *App) evolve(w http.ResponseWriter, r *http.Request) {
 	}
 	cfg := h.Config()
 	h.Release()
-	if cfg.ChunkStrategy != "fixed" {
-		write(w, 409, map[string]string{"error": "active strategy must be fixed for this experiment"})
-		return
-	}
 	path := a.corpusPath
 	if path == "" {
-		path = "datasets/rag_eval_98.json"
+		path = evolution.PublicDatasetPath
 	}
 	cases, docs, hash, err := evolution.LoadPublicCorpus(path)
 	if err != nil {
 		write(w, 503, map[string]string{"error": "public corpus unavailable"})
 		return
 	}
-	prediction := evolution.Prediction{ExpectedHitRateDeltaMin: 0.10, ExpectedHitRateDeltaMax: 0.25}
-	before, after, decision, err := evolution.ImproveRetrieval(a.manager, "kb-agent", cfg, cases, docs, hash,
-		rag.FixedSplitter{Size: 40}, rag.RecursiveSplitter{Size: 60, Overlap: 10}, prediction)
-	result, recordErr := evolution.NewExperiment(before, after, prediction, decision)
+	report, err := evolution.RunLoop(evolution.LoopOptions{
+		DatasetPath: path,
+		Cases:       cases,
+		Docs:        docs,
+		DatasetHash: hash,
+		Baseline:    evolution.PolicyForConfig(cfg),
+		Manager:     a.manager,
+		AgentName:   "kb-agent",
+	})
+	if err != nil {
+		write(w, 500, map[string]string{"error": err.Error()})
+		return
+	}
+	result, recordErr := evolution.NewLoopExperiment(report)
 	if recordErr != nil {
 		write(w, 500, map[string]string{"error": "experiment id unavailable"})
 		return
@@ -220,10 +233,6 @@ func (a *App) evolve(w http.ResponseWriter, r *http.Request) {
 			write(w, 503, map[string]any{"error": "experiment evidence not saved", "result": result})
 			return
 		}
-	}
-	if err != nil {
-		write(w, 409, result)
-		return
 	}
 	write(w, 200, result)
 }
@@ -303,6 +312,12 @@ func (a *App) chat(w http.ResponseWriter, r *http.Request) {
 		defer handle.Release()
 		cfg = handle.Config()
 		ctx = context.WithValue(ctx, strategyKey{}, cfg.ChunkStrategy)
+		if cfg.PromptMode != "" {
+			ctx = context.WithValue(ctx, promptModeKey{}, cfg.PromptMode)
+		}
+		if cfg.TopK > 0 {
+			ctx = context.WithValue(ctx, topKKey{}, cfg.TopK)
+		}
 	}
 	answer, contracts, err := a.runtime.Run(ctx, input.Message)
 	if err != nil {
@@ -318,7 +333,7 @@ func (a *App) chat(w http.ResponseWriter, r *http.Request) {
 	retrievals.mu.Lock()
 	evidence := append([]RetrievalEvidence(nil), retrievals.entries...)
 	retrievals.mu.Unlock()
-	trace := Trace{ID: id, Query: input.Message, Answer: answer, Contracts: contracts, CreatedAt: time.Now().UTC(), ConfigVersion: cfg.Version, ChunkStrategy: cfg.ChunkStrategy, Retrievals: evidence}
+	trace := Trace{ID: id, Query: input.Message, Answer: answer, Contracts: contracts, CreatedAt: time.Now().UTC(), ConfigVersion: cfg.Version, ChunkStrategy: cfg.ChunkStrategy, PromptMode: cfg.PromptMode, TopK: cfg.TopK, Retrievals: evidence}
 	a.mu.Lock()
 	a.traces[id] = trace
 	a.mu.Unlock()
@@ -367,6 +382,8 @@ func write(w http.ResponseWriter, status int, value any) {
 }
 
 type strategyKey struct{}
+type promptModeKey struct{}
+type topKKey struct{}
 type searchTool struct{ retrievers map[string]*rag.Retriever }
 
 func (s searchTool) Name() string { return "search_docs" }
@@ -386,25 +403,35 @@ func (s searchTool) Call(ctx context.Context, args map[string]any) (string, erro
 	if retriever == nil {
 		return "", fmt.Errorf("unknown chunk strategy %q", strategy)
 	}
-	results := retriever.Retrieve(query, 3)
+	k := 3
+	if v, ok := ctx.Value(topKKey{}).(int); ok && v > 0 {
+		k = v
+	}
+	results := retriever.Retrieve(query, k)
 	if len(results) == 0 {
 		return "no indexed documents", nil
 	}
-	var parts []string
+	sources := make([]string, 0, len(results))
+	texts := make([]string, 0, len(results))
 	for _, result := range results {
 		passage := []rune(result.Text)
 		if len(passage) > 1200 {
 			passage = passage[:1200]
 		}
 		text := string(passage)
-		parts = append(parts, fmt.Sprintf("Source: %s\nContent: %s", result.Source, text))
+		sources = append(sources, result.Source)
+		texts = append(texts, text)
 		if log, ok := ctx.Value(retrievalKey{}).(*retrievalLog); ok {
 			log.mu.Lock()
 			log.entries = append(log.entries, RetrievalEvidence{Query: query, Source: result.Source, Text: text, Score: result.Score})
 			log.mu.Unlock()
 		}
 	}
-	return strings.Join(parts, "\n\n"), nil
+	mode, _ := ctx.Value(promptModeKey{}).(string)
+	if mode == "" {
+		mode = evolution.PromptEcho
+	}
+	return evolution.FormatAnswer(mode, query, sources, texts), nil
 }
 
 type demoLLM struct{ role string }
