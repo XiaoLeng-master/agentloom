@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 
 	"github.com/XiaoLeng-master/agentloom/internal/config"
@@ -70,8 +71,17 @@ func RunRetrieval(cases []Case, docs []rag.Document, datasetHash string, splitte
 	return out
 }
 
-// LoadPublicCorpus reads the dataset and its referenced public files.
+// LoadPublicCorpus reads the dataset and the files it names, relative to the
+// current directory. make loop and POST /v1/evolve use this path, so editing
+// those files changes their hash.
 func LoadPublicCorpus(path string) ([]Case, []rag.Document, string, error) {
+	return LoadPublicCorpusIn("", path)
+}
+
+// LoadPublicCorpusIn reads source files under root. An empty root uses the
+// paths as written in the dataset. Document sources stay the dataset paths,
+// so hit checks still compare against sourceDoc.
+func LoadPublicCorpusIn(root, path string) ([]Case, []rag.Document, string, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, nil, "", err
@@ -93,15 +103,72 @@ func LoadPublicCorpus(path string) ([]Case, []rag.Document, string, error) {
 			continue
 		}
 		seen[c.SourceDoc] = true
-		body, err := os.ReadFile(c.SourceDoc)
+		sourcePath := c.SourceDoc
+		if root != "" {
+			sourcePath = filepath.Join(root, filepath.FromSlash(c.SourceDoc))
+		}
+		body, err := os.ReadFile(sourcePath)
 		if err != nil {
-			return nil, nil, "", fmt.Errorf("read %s: %w", c.SourceDoc, err)
+			return nil, nil, "", fmt.Errorf("read %s: %w", sourcePath, err)
 		}
 		docs = append(docs, rag.Document{Source: c.SourceDoc, Text: string(body)})
 	}
 	sort.Slice(docs, func(i, j int) bool { return docs[i].Source < docs[j].Source })
 	h := sha256.New()
 	h.Write(data)
+	for _, d := range docs {
+		h.Write([]byte(d.Source))
+		h.Write([]byte(d.Text))
+	}
+	return cases, docs, hex.EncodeToString(h.Sum(nil)), nil
+}
+
+type frozenCorpus struct {
+	Dataset string            `json:"dataset"`
+	Files   map[string]string `json:"files"`
+}
+
+// LoadFrozenCorpus reads a snapshot written by the regression test fixture.
+// The dataset text and file bodies are the bytes from the measurement, not the
+// working tree.
+func LoadFrozenCorpus(path string) ([]Case, []rag.Document, string, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, nil, "", err
+	}
+	var frozen frozenCorpus
+	if err := json.Unmarshal(raw, &frozen); err != nil {
+		return nil, nil, "", err
+	}
+	if frozen.Dataset == "" || len(frozen.Files) == 0 {
+		return nil, nil, "", fmt.Errorf("empty frozen corpus")
+	}
+	var cases []Case
+	if err := json.Unmarshal([]byte(frozen.Dataset), &cases); err != nil {
+		return nil, nil, "", err
+	}
+	if len(cases) == 0 {
+		return nil, nil, "", fmt.Errorf("empty dataset")
+	}
+	seen := map[string]bool{}
+	var docs []rag.Document
+	for _, c := range cases {
+		if c.ID == "" || c.Question == "" || c.SourceDoc == "" {
+			return nil, nil, "", fmt.Errorf("incomplete case")
+		}
+		if seen[c.SourceDoc] {
+			continue
+		}
+		seen[c.SourceDoc] = true
+		body, ok := frozen.Files[c.SourceDoc]
+		if !ok {
+			return nil, nil, "", fmt.Errorf("frozen corpus missing %s", c.SourceDoc)
+		}
+		docs = append(docs, rag.Document{Source: c.SourceDoc, Text: body})
+	}
+	sort.Slice(docs, func(i, j int) bool { return docs[i].Source < docs[j].Source })
+	h := sha256.New()
+	h.Write([]byte(frozen.Dataset))
 	for _, d := range docs {
 		h.Write([]byte(d.Source))
 		h.Write([]byte(d.Text))
