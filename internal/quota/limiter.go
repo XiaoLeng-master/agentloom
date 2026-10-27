@@ -18,6 +18,10 @@ var ErrRejected = errors.New("quota: concurrency rejected")
 // Stats is a point-in-time view of a Limiter. Inflight and Queued are gauges;
 // Rejected and Admitted are cumulative. Peaks are the high-water marks since
 // the limiter was created.
+//
+// Admitted counts Acquire calls that returned a release function. A wait that
+// is cancelled in the same moment a slot is granted is only Rejected: the
+// slot is released immediately and the caller does not run the work.
 type Stats struct {
 	Inflight     int   `json:"inflight"`
 	Queued       int   `json:"queued"`
@@ -96,6 +100,7 @@ func (l *Limiter) Acquire(ctx context.Context, key string) (func(), error) {
 	l.mu.Lock()
 	if len(l.waiters) == 0 && l.canAdmit(key) {
 		l.admitLocked(key)
+		l.admitted++
 		l.mu.Unlock()
 		l.notify()
 		return l.releaser(key), nil
@@ -140,6 +145,9 @@ func (l *Limiter) Acquire(ctx context.Context, key string) (func(), error) {
 			l.notify()
 			return nil, fmt.Errorf("%w: %w", ErrRejected, err)
 		}
+		l.mu.Lock()
+		l.admitted++
+		l.mu.Unlock()
 		return l.releaser(key), nil
 	}
 }
@@ -180,7 +188,6 @@ func (l *Limiter) canAdmit(key string) bool {
 func (l *Limiter) admitLocked(key string) {
 	l.inflight++
 	l.per[key]++
-	l.admitted++
 	if l.inflight > l.peakInflight {
 		l.peakInflight = l.inflight
 	}

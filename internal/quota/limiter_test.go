@@ -125,6 +125,9 @@ func TestLimiterContextTimeoutRejects(t *testing.T) {
 	if st.Rejected != 1 {
 		t.Fatalf("rejected=%d, want 1", st.Rejected)
 	}
+	if st.Admitted != 1 {
+		t.Fatalf("admitted=%d, want 1 (only the holder; the timed-out waiter is not admitted)", st.Admitted)
+	}
 	if st.Inflight != 1 {
 		t.Fatalf("holder inflight=%d, want 1", st.Inflight)
 	}
