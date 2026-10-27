@@ -15,11 +15,11 @@ canary:     ## 进程内灰度放量与回滚（命令给定窗口，不是公�
 	$(GO) run ./cmd/canary
 
 etcd-demo:  ## 本机起单节点 etcd 并前台启动 agentd（需要 Docker）
-	docker compose -f deploy/docker-compose.yml up -d --wait etcd
+	docker compose --profile etcd up -d --wait etcd
 	AGENTLOOM_ETCD_ENDPOINTS=127.0.0.1:2379 $(GO) run ./cmd/agentd
 
 etcd-integration: ## 对本机 etcd 跑集成测试（需要 Docker；没有则不要用这条）
-	docker compose -f deploy/docker-compose.yml up -d --wait etcd
+	docker compose --profile etcd up -d --wait etcd
 	AGENTLOOM_ETCD_ENDPOINTS=127.0.0.1:2379 $(GO) test -tags integration -count=1 ./internal/config/ -run TestEtcdWatchReloadsAndRollsBack
 
 verify:     ## 一键自证：格式化 + 静态检查 + 全量测试（含 race）

@@ -22,7 +22,7 @@
 make etcd-demo
 ```
 
-这条命令执行 `docker compose -f deploy/docker-compose.yml up -d --wait etcd`，镜像是 `quay.io/coreos/etcd:v3.5.16`，只发布 `127.0.0.1:2379`，然后以前台方式启动 `agentd`。日志里会出现 `config source: etcd endpoints=127.0.0.1:2379 prefix=/agentloom/agents/`。
+这条命令执行 `docker compose --profile etcd up -d --wait etcd`，镜像是 `quay.io/coreos/etcd:v3.5.16`，只发布 `127.0.0.1:2379`，然后以前台方式启动 `agentd`。日志里会出现 `config source: etcd endpoints=127.0.0.1:2379 prefix=/agentloom/agents/`。
 
 另开一个终端做下面的检查。`etcdctl` 在容器里，`ETCDCTL_API=3`。
 
@@ -37,7 +37,7 @@ curl -s localhost:8080/v1/config
 热更新稳定配置：
 
 ```bash
-docker compose -f deploy/docker-compose.yml exec etcd \
+docker compose --profile etcd exec etcd \
   etcdctl --endpoints=http://127.0.0.1:2379 put /agentloom/agents/kb-agent/config \
   '{"system_prompt":"etcd-stable","model":"qwen2.5","max_iter":10,"chunk_strategy":"recursive","prompt_mode":"echo","top_k":5}'
 curl -s localhost:8080/v1/config
@@ -48,7 +48,7 @@ curl -s localhost:8080/v1/config
 10% 灰度：
 
 ```bash
-docker compose -f deploy/docker-compose.yml exec etcd \
+docker compose --profile etcd exec etcd \
   etcdctl --endpoints=http://127.0.0.1:2379 put /agentloom/agents/kb-agent/canary \
   '{"percent":10,"system_prompt":"etcd-canary","model":"qwen2.5","max_iter":10,"chunk_strategy":"fixed","prompt_mode":"echo","top_k":3}'
 curl -s -H 'X-Tenant: tenant-79' localhost:8080/v1/config
@@ -61,7 +61,7 @@ curl -s localhost:8080/v1/config
 放到 50%：
 
 ```bash
-docker compose -f deploy/docker-compose.yml exec etcd \
+docker compose --profile etcd exec etcd \
   etcdctl --endpoints=http://127.0.0.1:2379 put /agentloom/agents/kb-agent/canary \
   '{"percent":50,"system_prompt":"etcd-canary","model":"qwen2.5","max_iter":10,"chunk_strategy":"fixed","prompt_mode":"echo","top_k":3}'
 curl -s -H 'X-Tenant: tenant-79' localhost:8080/v1/config
@@ -74,7 +74,7 @@ curl -s -H 'X-Tenant: tenant-74' localhost:8080/v1/config
 一键回滚：
 
 ```bash
-docker compose -f deploy/docker-compose.yml exec etcd \
+docker compose --profile etcd exec etcd \
   etcdctl --endpoints=http://127.0.0.1:2379 del /agentloom/agents/kb-agent/canary
 curl -s -H 'X-Tenant: tenant-79' localhost:8080/v1/config
 ```
@@ -84,7 +84,7 @@ curl -s -H 'X-Tenant: tenant-79' localhost:8080/v1/config
 100% 放量会把候选升成唯一稳定配置，之后 `canary_active` 为 false，`Acquire` 和不带租户的请求都读到候选：
 
 ```bash
-docker compose -f deploy/docker-compose.yml exec etcd \
+docker compose --profile etcd exec etcd \
   etcdctl --endpoints=http://127.0.0.1:2379 put /agentloom/agents/kb-agent/canary \
   '{"percent":100,"system_prompt":"etcd-canary","model":"qwen2.5","max_iter":10,"chunk_strategy":"fixed","prompt_mode":"echo","top_k":3}'
 curl -s localhost:8080/v1/config
@@ -95,7 +95,7 @@ curl -s localhost:8080/v1/config
 停止前台的 `agentd` 用 Ctrl-C。停止 etcd：
 
 ```bash
-docker compose -f deploy/docker-compose.yml stop etcd
+docker compose --profile etcd stop etcd
 ```
 
 ## 集成测试

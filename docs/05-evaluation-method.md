@@ -2,7 +2,7 @@
 
 > 4 类评测器怎么算分、HitRate@K 怎么算、门禁怎么卡。
 
-> **实现边界**：`make loop` 与 `POST /v1/evolve` 在固定 98 条上做离线复测。来源命中看期望文档是否出现在 Top-K。`deterministic_proxy` 把首个检索片段当作代理答案，用词法 Prober 相对 groundTruth 打分，并统计引用是否覆盖期望来源。渲染回答里的事实覆盖只用于归因，不用于晋升。三项都不是模型生成的答案质量，也不是 LLM Judge 或 claim-level faithfulness。`GET /v1/bench` 仍是只读的 fixed/recursive 来源命中预览，`answer_quality` 为 `not_evaluated`。门禁通过后候选进入进程内灰度，观测回落会自动回滚，稳定则逐步放到 100%。`make canary` 复现的是命令给定窗口，不是这条 98 条链路的在线灰度。etcd 是可选配置源，文档见 `docs/08-etcd-hot-reload.md`；这条闭环命令本身不向 etcd 写入。具体数字以该提交的 `make loop` 输出为准。
+> **实现边界**：`make loop` 与 `POST /v1/evolve` 在固定 98 条上做离线复测。来源命中看期望文档是否出现在 Top-K。`deterministic_proxy` 把首个检索片段当作代理答案，用词法 Prober 相对 groundTruth 打分，并统计引用是否覆盖期望来源。渲染回答里的事实覆盖只用于归因，不用于晋升。三项都不是模型生成的答案质量，也不是 LLM Judge 或 claim-level faithfulness。`GET /v1/bench` 仍是只读的 fixed/recursive 来源命中预览，`answer_quality` 为 `not_evaluated`。门禁通过后候选进入进程内灰度，观测回落会自动回滚，稳定则逐步放到 100%。`make canary` 复现的是命令给定窗口，不是这条 98 条链路的在线灰度。etcd 是可选配置源，文档见 `docs/10-etcd-hot-reload.md`；这条闭环命令本身不向 etcd 写入。具体数字以该提交的 `make loop` 输出为准。
 
 ## 评测器（internal/eval/）
 

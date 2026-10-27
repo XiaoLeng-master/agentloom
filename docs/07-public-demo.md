@@ -30,5 +30,5 @@ make run
 
 - 当前质量评测是 `deterministic_proxy`，用于复现检索上下文、引用和词法重合；尚未接入真实 LLM Judge。
 - Trace 已可查询并异步写入内存或 Redis。Trace 触发的定时评测仍未做。进程内灰度与回滚由 `make canary` 用给定窗口复现。
-- etcd 热更新是可选本地组件，步骤见 `docs/08-etcd-hot-reload.md`。公开演示不设置 `AGENTLOOM_ETCD_ENDPOINTS` 时仍使用内存配置。
+- etcd 热更新是可选本地组件，步骤见 `docs/10-etcd-hot-reload.md`。公开演示不设置 `AGENTLOOM_ETCD_ENDPOINTS` 时仍使用内存配置。
 - Kafka、Milvus、用户系统和多租户密钥管理不属于当前公开演示的已交付范围。
