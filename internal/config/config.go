@@ -22,6 +22,8 @@ type Config struct {
 	MaxIter       int
 	Tools         []string
 	ChunkStrategy string
+	PromptMode    string
+	TopK          int
 }
 
 // ErrUnknownAgent is returned by Acquire when no config is registered for name.

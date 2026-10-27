@@ -2,7 +2,7 @@
 
 > 4 类评测器怎么算分、HitRate@K 怎么算、门禁怎么卡。
 
-> **实现边界**：下文的四类评测与三条发布门禁是目标设计。当前 `POST /v1/evolve` 只批量复测 98 条公开问题的检索来源命中、进行检索门禁并更新本地进程配置；`answer_quality` 记录为 `not_evaluated`。`internal/eval` 的规则评测器和词法 Prober 尚未接入该发布链路，不能将它们的单测视为真实答案质量或安全性门禁。
+> **实现边界**：`make loop` 与 `POST /v1/evolve` 已在固定 98 条上跑通批量评测、按 Trace 规则归因、结构化优化任务和自动复测门禁。答案质量是确定性事实覆盖代理，`answer_quality` 记为 `deterministic_proxy:<分数>`，不是 LLM Judge。`GET /v1/bench` 仍是只读的 fixed/recursive 命中率预览，该预览的 `answer_quality` 仍为 `not_evaluated`。灰度、etcd 与自动回滚不在这条链路里。
 
 ## 评测器（internal/eval/）
 
@@ -70,7 +70,7 @@ Trace 采集（mq 削峰 + 按月分表）
 
 三条都过才灰度。任一不过，优化任务标 failed，回流给归因引擎重判。
 
-上述是目标门禁，不是当前 `POST /v1/evolve` 的实际发布条件。当前接口仅检查同一数据快照下的检索命中不降；不执行真实 G-Eval、Faithfulness 判定或灰度监控，也没有自动回滚。因此它的通过只代表检索层离线实验通过，不能代表答案质量通过。
+`POST /v1/evolve` 现在用同一套门禁比较 HitRate、确定性答案质量代理和新增不安全样本。它不执行真实 G-Eval 或 Faithfulness 判定，也没有灰度监控或自动回滚。门禁通过只表示离线代理指标没有退步。
 
 ## 怎么跑
 
@@ -82,9 +82,13 @@ make bench
 # 评测器单测
 go test -race ./internal/eval/
 
-# 端到端（WIP：Trace 导入 → 批量评测 → 报告）
-# 详见 docs/roadmap.md
+# 评测—归因—优化—复测门禁（在仓库根目录执行）
+make loop
+# 或: go run ./cmd/loop
+# JSON：go run ./cmd/loop -json
 ```
+
+`make loop` 与 `POST /v1/evolve` 绑定 `datasets/rag_eval_98.json`。两者都用确定性本地替身（不调用外部 LLM）对每条样本检索、调用 `search_docs`、生成答案，并跑 prompt / rag / skill / agent 四个规则评测器。失败按 Trace 规则归因：期望来源未命中归检索层，tool error / unknown tool / max iterations 归工具层，检索命中但答案没有覆盖期望事实归 Prompt 层，再按原因计数。优化任务写成结构化记录（层、原因、候选配置、预测区间），由任务生成候选并自动复测。通过门禁的最佳候选写回本地配置。答案质量代理不是 LLM Judge。
 
 输出示例（`make bench`）：
 

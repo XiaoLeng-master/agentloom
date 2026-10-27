@@ -23,17 +23,64 @@ type Experiment struct {
 	ActualDelta   float64      `json:"actual_delta"`
 	Decision      Decision     `json:"decision"`
 	AnswerQuality string       `json:"answer_quality"`
+	Tasks         []TaskRecord `json:"tasks,omitempty"`
+	CauseCounts   []CauseCount `json:"cause_counts,omitempty"`
+	Promoted      *Promotion   `json:"promoted,omitempty"`
 }
 
 // NewExperiment gives each run a random identity and explicit quality boundary.
-func NewExperiment(before, after RetrievalRun, prediction Prediction, decision Decision) (Experiment, error) {
+func newExperimentID() (string, error) {
 	var random [16]byte
 	if _, err := rand.Read(random[:]); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(random[:]), nil
+}
+
+func NewExperiment(before, after RetrievalRun, prediction Prediction, decision Decision) (Experiment, error) {
+	id, err := newExperimentID()
+	if err != nil {
 		return Experiment{}, err
 	}
-	return Experiment{ID: hex.EncodeToString(random[:]), CreatedAt: time.Now().UTC(), Before: before, After: after,
+	return Experiment{ID: id, CreatedAt: time.Now().UTC(), Before: before, After: after,
 		Failures: DiagnoseRetrieval(before, after), Prediction: prediction, ActualDelta: after.HitRate - before.HitRate,
 		Decision: decision, AnswerQuality: "not_evaluated"}, nil
+}
+
+// NewLoopExperiment stores the task-driven retest. Answer quality is the
+// measured deterministic proxy, not a stand-in for an LLM judge.
+func NewLoopExperiment(report LoopReport) (Experiment, error) {
+	id, err := newExperimentID()
+	if err != nil {
+		return Experiment{}, err
+	}
+	before := RetrievalRun{Strategy: report.Baseline.Metrics.Strategy, DatasetHash: report.DatasetHash, Cases: report.Cases, HitRate: report.Baseline.Metrics.HitRate}
+	after := before
+	prediction := Prediction{}
+	decision := Decision{Passed: false, Reason: "no candidate passed the gate"}
+	actual := 0.0
+	if report.Promoted != nil {
+		for _, candidate := range report.Candidates {
+			if candidate.Task.ID != report.Promoted.TaskID {
+				continue
+			}
+			after = RetrievalRun{Strategy: candidate.Metrics.Strategy, DatasetHash: report.DatasetHash, Cases: candidate.Metrics.Cases, HitRate: candidate.Metrics.HitRate}
+			prediction = candidate.Task.Prediction
+			decision = candidate.Gate
+			actual = candidate.ActualDelta
+			break
+		}
+	}
+	tasks := report.Tasks
+	if tasks == nil {
+		tasks = []TaskRecord{}
+	}
+	return Experiment{
+		ID: id, CreatedAt: time.Now().UTC(), Before: before, After: after,
+		Prediction: prediction, ActualDelta: actual, Decision: decision,
+		AnswerQuality: fmt.Sprintf("deterministic_proxy:%.4f", report.Baseline.Metrics.Quality),
+		Tasks:         tasks, CauseCounts: report.CauseCounts, Promoted: report.Promoted,
+	}, nil
 }
 
 var ErrExperimentNotFound = errors.New("experiment not found")

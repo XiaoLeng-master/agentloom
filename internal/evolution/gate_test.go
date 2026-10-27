@@ -34,3 +34,19 @@ func TestPromoteRecordsPredictionAndKeepsInFlightConfig(t *testing.T) {
 	}
 	old.Release()
 }
+
+func TestJudgeComparesQualityAndRecordsMissedPrediction(t *testing.T) {
+	baseline := Result{Cases: 98, HitRate: 0.40, Quality: 0.50, ToolSuccess: 1}
+	next := Result{Cases: 98, HitRate: 0.40, Quality: 0.62, ToolSuccess: 1}
+	prediction := Prediction{Metric: "quality", ExpectedQualityDeltaMin: 0.20, ExpectedQualityDeltaMax: 0.30}
+	decision, err := Judge(baseline, next, prediction)
+	if err != nil || !decision.Passed || decision.PredictionMatched {
+		t.Fatalf("decision=%+v err=%v", decision, err)
+	}
+	unsafe := next
+	unsafe.NewUnsafeFailures = 1
+	rejected, err := Judge(baseline, unsafe, prediction)
+	if err == nil || rejected.Passed || rejected.Reason != "regression gate failed" {
+		t.Fatalf("rejected=%+v err=%v", rejected, err)
+	}
+}

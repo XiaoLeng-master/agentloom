@@ -12,11 +12,14 @@ import (
 	"github.com/XiaoLeng-master/agentloom/internal/rag"
 )
 
-// Case identifies the expected source for one public retrieval question.
+// Case is one row of the fixed public evaluation set.
+// Type and GroundTruth are optional for older retrieval-only callers.
 type Case struct {
-	ID        string `json:"id"`
-	Question  string `json:"question"`
-	SourceDoc string `json:"sourceDoc"`
+	ID          string `json:"id"`
+	Type        string `json:"type,omitempty"`
+	Question    string `json:"question"`
+	GroundTruth string `json:"groundTruth,omitempty"`
+	SourceDoc   string `json:"sourceDoc"`
 }
 
 // CaseResult keeps per-question evidence so aggregate scores are auditable.

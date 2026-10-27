@@ -39,8 +39,8 @@ agentloom 把这三件事做在同一套平台里，并且**让每一环都咬�
 | 特性 | 说明 | 状态 |
 |---|---|---|
 | **多 Agent 分层协作** | Planner / Executor / Verifier 角色池与消息契约；子任务当前串行执行 | ✅ |
-| **Harness 自进化闭环** | 可手动触发同语料检索复测、失败来源归因、预测检验、门禁、本地配置生效与实验历史读回；Trace 驱动的定时批评测、答案质量门禁及自动回滚未完成 | 🚧 |
-| **预测式归因** | 每次优化提交声明预期收益，评测验证预测成立与否，逐次变更可归因 | 📋 |
+| **Harness 自进化闭环** | `make loop` 与 `POST /v1/evolve` 在固定 98 条上批量评测，按 Trace 规则把失败归到 Prompt/检索/工具层并按原因计数，再由结构化优化任务驱动多个候选、自动复测和门禁。灰度与自动回滚未做 | 🚧 |
+| **预测式归因** | 每个优化任务在复测前声明自己的预期区间（层、原因、候选配置、区间），复测后记录预测是否成立。不再使用写死的 0.10–0.25 | 🚧 |
 | **配置热更新** | 进程内引用计数替换；etcd Source 尚未实现 | ✅ |
 | **MCP 双传输适配** | stdio / HTTP JSON-RPC；请求取消、响应关联校验与有限 JSON Schema 参数校验；写工具默认不重试 | 🚧 |
 | **可评测 RAG** | 4 种切分策略可插拔 + 自建 98 条标注评估集，HitRate@K 可一键复现 | ✅ |
@@ -60,14 +60,15 @@ git clone https://github.com/XiaoLeng-master/agentloom.git
 cd agentloom
 make verify      # 格式整理 + vet + 全量 race 测试
 make bench       # 输出当前提交的切分策略 HitRate@K 对比表
+make loop        # 98 条评测→归因聚类→多候选→自动复测门禁（确定性替身，不调用外部模型）
 make run         # 启动 HTTP 入口 agentd，监听 :8080
-go run ./cmd/evolve # 离线运行 fixed→recursive 检索复测，输出逐条结果和配置版本
+go run ./cmd/evolve # 与 make loop 相同的任务驱动闭环，输出归因、候选和门禁报告
 curl localhost:8080/health   # {"status":"ok","agents":["kb-agent"]}
 ```
 
 `make run` 后打开 `http://localhost:8080/`，可在本地工作台使用 Chat、Trace、Benchmark 三个页面。Benchmark 首次通过只读 `GET /v1/bench` 展示基线，点击复测才调用会更新本地配置的 `POST /v1/evolve`。前端由同一个 Go 服务提供；在 `web/` 执行 `npm ci && npm run build` 可重新构建嵌入的静态资源（需 Node.js/npm）。仓库已包含构建产物，普通运行无需安装前端依赖。浏览器不接触 `DEEPSEEK_API_KEY`。
 
-`cmd/evolve` 会在相同数据集和语料上计算两次检索命中率，并输出数据哈希、逐条命中、失败来源归因、预测区间、实际变化和本地配置版本。服务运行时可用本地演示 token 调用 `POST /v1/evolve`；每次实验写入本地 `.agentloom/evolutions/`，通过 `GET /v1/evolutions` 或 `GET /v1/evolutions/{id}` 读回。门禁通过后，后续 `/v1/chat` 请求的 Trace 会显示新的配置版本和切分策略。该接口是手动触发的检索实验，当前没有请求 Trace 驱动的定时评测；答案质量、安全性与自动回滚也尚未完成。数字随被索引的仓库文件变化，请以当次运行输出为准。
+`make loop` 和 `go run ./cmd/evolve` 跑同一条任务驱动闭环：固定 98 条、按原因聚类的失败，以及每个候选的层级、原因、配置和预测区间。复测后记录门禁是否通过、预测是否成立。服务运行时可用本地演示 token 调用 `POST /v1/evolve`；响应里的 `tasks` 就是这些结构化任务。实验写入本地 `.agentloom/evolutions/`，通过 `GET /v1/evolutions` 或 `GET /v1/evolutions/{id}` 读回。只有门禁通过的候选会替换本地配置，后续 `/v1/chat` 的 Trace 会显示新的配置版本和切分策略。答案质量是确定性事实覆盖代理，不是 LLM Judge。没有定时评测，也没有灰度或自动回滚。数字以当次运行为准。
 
 本地端到端演示（确定性演示模型、内存文档检索；不是在线 LLM 或生产知识库）：
 
@@ -79,7 +80,7 @@ curl -H 'Authorization: Bearer local-demo' -H 'Content-Type: application/json' \
 curl -H 'Authorization: Bearer local-demo' localhost:8080/v1/traces/<trace_id>
 ```
 
-演示链路经过本地网关、Planner、Executor 的 RAG Tool 和 Verifier。服务从公开的 README 和架构文档建立检索索引；Trace 的 `retrievals` 记录实际返回给 Executor 的片段和来源。初始配置为 fixed 切分（片段可能残缺），调用 `POST /v1/evolve` 通过检索门禁后切到 recursive；重启服务会重置为 fixed，但实验历史仍保留。默认使用确定性演示模型；设置本地环境变量 `DEEPSEEK_API_KEY` 后，Executor 使用 DeepSeek 官方 Chat Completions API 的 `deepseek-chat`，演示 Planner 保持单任务规则，Verifier 使用确定性非空输出规则（并不验证答案事实正确性）。Key 仅由 Go 服务读取，请勿写入仓库或浏览器。DeepSeek 是生成模型，检索仍使用 HashEmbedder。Trace 在响应前写入进程内存；如需跨进程保留，可执行 `docker compose up -d redis`，再设置 `AGENTLOOM_REDIS_ADDR=127.0.0.1:16379` 启动服务。后台队列异步写 Redis，请求不等待持久化；队列满或写入失败可能丢失跨进程记录，关停时会排空已接收事件。Redis 启动检查失败会报错。远端 MCP 及 Trace 驱动的定时批评测尚未接入此入口；Kafka、etcd、Milvus 仍未落地。
+演示链路经过本地网关、Planner、Executor 的 RAG Tool 和 Verifier。服务从公开的 README 和架构文档建立检索索引；Trace 的 `retrievals` 记录实际返回给 Executor 的片段和来源。初始配置为 fixed 切分。`POST /v1/evolve` 按当次归因生成候选，只有复测门禁通过才替换本地配置，切到哪一种切分由任务决定，不会固定改成 recursive。重启服务会重置配置，实验历史仍保留。默认使用确定性演示模型；设置本地环境变量 `DEEPSEEK_API_KEY` 后，Executor 使用 DeepSeek 官方 Chat Completions API 的 `deepseek-chat`，演示 Planner 保持单任务规则，Verifier 使用确定性非空输出规则（并不验证答案事实正确性）。Key 仅由 Go 服务读取，请勿写入仓库或浏览器。DeepSeek 是生成模型，检索仍使用 HashEmbedder。Trace 在响应前写入进程内存；如需跨进程保留，可执行 `docker compose up -d redis`，再设置 `AGENTLOOM_REDIS_ADDR=127.0.0.1:16379` 启动服务。后台队列异步写 Redis，请求不等待持久化；队列满或写入失败可能丢失跨进程记录，关停时会排空已接收事件。Redis 启动检查失败会报错。远端 MCP 及 Trace 驱动的定时批评测尚未接入此入口；Kafka、etcd、Milvus 仍未落地。
 
 环境：
 - Go 1.22+
