@@ -52,11 +52,21 @@ func main() {
 	})
 
 	mux := http.NewServeMux()
+	publicMode := os.Getenv("AGENTLOOM_PUBLIC_MODE") == "1"
+	publicToken := os.Getenv("AGENTLOOM_PUBLIC_TOKEN")
+	adminToken := os.Getenv("AGENTLOOM_ADMIN_TOKEN")
+	if publicMode && adminToken == "" {
+		log.Fatal("AGENTLOOM_ADMIN_TOKEN is required in public mode")
+	}
 	var models map[string]core.LLMClient
 	if key := os.Getenv("DEEPSEEK_API_KEY"); key != "" {
 		models = map[string]core.LLMClient{}
+		model := os.Getenv("DEEPSEEK_MODEL")
+		if model == "" {
+			model = "deepseek-flash"
+		}
 		for _, role := range []string{"executor"} {
-			client := core.DeepSeekClient{APIKey: key, Model: "deepseek-chat"}
+			client := core.DeepSeekClient{APIKey: key, Model: model, MaxTokens: 1200, NoThinking: true}
 			if role == "executor" {
 				client.Tools = []map[string]any{{"type": "function", "function": map[string]any{"name": "search_docs", "description": "Search indexed documentation", "parameters": map[string]any{"type": "object", "properties": map[string]any{"query": map[string]any{"type": "string"}}, "required": []string{"query"}}}}}
 			}
@@ -69,6 +79,9 @@ func main() {
 	}
 	local := app.NewWithModels(docs, models)
 	local.WithConfigManager(mgr).WithExperimentHistory(".agentloom/evolutions")
+	if publicMode {
+		local.WithAccessPolicy(app.AccessPolicy{PublicMode: true, PublicToken: publicToken, AdminToken: adminToken}).WithMaxConcurrentChats(4)
+	}
 	if redisAddr := os.Getenv("AGENTLOOM_REDIS_ADDR"); redisAddr != "" {
 		store := app.NewRedisTraceStore(redisAddr, 24*time.Hour)
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)

@@ -14,18 +14,26 @@ import (
 
 // Experiment records a single retrieval comparison and its gate decision.
 type Experiment struct {
-	ID            string       `json:"id"`
-	CreatedAt     time.Time    `json:"created_at"`
-	Before        RetrievalRun `json:"before"`
-	After         RetrievalRun `json:"after"`
-	Failures      []Failure    `json:"failures"`
-	Prediction    Prediction   `json:"prediction"`
-	ActualDelta   float64      `json:"actual_delta"`
-	Decision      Decision     `json:"decision"`
-	AnswerQuality string       `json:"answer_quality"`
-	Tasks         []TaskRecord `json:"tasks,omitempty"`
-	CauseCounts   []CauseCount `json:"cause_counts,omitempty"`
-	Promoted      *Promotion   `json:"promoted,omitempty"`
+	ID                 string       `json:"id"`
+	CreatedAt          time.Time    `json:"created_at"`
+	Before             RetrievalRun `json:"before"`
+	After              RetrievalRun `json:"after"`
+	Failures           []Failure    `json:"failures"`
+	Prediction         Prediction   `json:"prediction"`
+	ActualDelta        float64      `json:"actual_delta"`
+	Decision           Decision     `json:"decision"`
+	AnswerQuality      string       `json:"answer_quality"`
+	Tasks              []TaskRecord `json:"tasks,omitempty"`
+	CauseCounts        []CauseCount `json:"cause_counts,omitempty"`
+	Promoted           *Promotion   `json:"promoted,omitempty"`
+	ProxyMode          string       `json:"proxy_mode,omitempty"`
+	QualityBefore      float64      `json:"quality_before,omitempty"`
+	QualityAfter       float64      `json:"quality_after,omitempty"`
+	HitRateDelta       float64      `json:"hit_rate_delta,omitempty"`
+	FailureCountBefore int          `json:"failure_count_before,omitempty"`
+	FailureCountAfter  int          `json:"failure_count_after,omitempty"`
+	GroundingBefore    int          `json:"grounding_failures_before,omitempty"`
+	GroundingAfter     int          `json:"grounding_failures_after,omitempty"`
 }
 
 // NewExperiment gives each run a random identity and explicit quality boundary.
@@ -42,9 +50,15 @@ func NewExperiment(before, after RetrievalRun, prediction Prediction, decision D
 	if err != nil {
 		return Experiment{}, err
 	}
+	quality := "not_evaluated"
+	if after.QualityMode != "" {
+		quality = after.QualityMode
+	} else if before.QualityMode != "" {
+		quality = before.QualityMode
+	}
 	return Experiment{ID: id, CreatedAt: time.Now().UTC(), Before: before, After: after,
 		Failures: DiagnoseRetrieval(before, after), Prediction: prediction, ActualDelta: after.HitRate - before.HitRate,
-		Decision: decision, AnswerQuality: "not_evaluated"}, nil
+		Decision: decision, AnswerQuality: quality}, nil
 }
 
 // NewLoopExperiment stores the task-driven retest. Answer quality is the
@@ -54,20 +68,21 @@ func NewLoopExperiment(report LoopReport) (Experiment, error) {
 	if err != nil {
 		return Experiment{}, err
 	}
-	before := RetrievalRun{Strategy: report.Baseline.Metrics.Strategy, DatasetHash: report.DatasetHash, Cases: report.Cases, HitRate: report.Baseline.Metrics.HitRate}
+	beforeMetrics := report.Baseline.Metrics
+	before := retrievalFromMetrics(beforeMetrics, report.DatasetHash, report.Baseline)
 	after := before
+	afterMetrics := beforeMetrics
 	prediction := Prediction{}
 	decision := Decision{Passed: false, Reason: "no candidate passed the gate"}
-	actual := 0.0
 	if report.Promoted != nil {
 		for _, candidate := range report.Candidates {
 			if candidate.Task.ID != report.Promoted.TaskID {
 				continue
 			}
-			after = RetrievalRun{Strategy: candidate.Metrics.Strategy, DatasetHash: report.DatasetHash, Cases: candidate.Metrics.Cases, HitRate: candidate.Metrics.HitRate}
+			afterMetrics = candidate.Metrics
+			after = retrievalFromMetrics(afterMetrics, report.DatasetHash, BatchReport{Metrics: candidate.Metrics, Results: candidate.Results})
 			prediction = candidate.Task.Prediction
 			decision = candidate.Gate
-			actual = candidate.ActualDelta
 			break
 		}
 	}
@@ -75,12 +90,38 @@ func NewLoopExperiment(report LoopReport) (Experiment, error) {
 	if tasks == nil {
 		tasks = []TaskRecord{}
 	}
+	failures := DiagnoseRetrieval(before, after)
+	if failures == nil {
+		failures = []Failure{}
+	}
 	return Experiment{
 		ID: id, CreatedAt: time.Now().UTC(), Before: before, After: after,
-		Prediction: prediction, ActualDelta: actual, Decision: decision,
-		AnswerQuality: fmt.Sprintf("deterministic_proxy:%.4f", report.Baseline.Metrics.Quality),
-		Tasks:         tasks, CauseCounts: report.CauseCounts, Promoted: report.Promoted,
+		Failures: failures, Prediction: prediction, ActualDelta: after.HitRate - before.HitRate,
+		Decision: decision, AnswerQuality: "deterministic_proxy",
+		Tasks: tasks, CauseCounts: report.CauseCounts, Promoted: report.Promoted,
+		ProxyMode:          "deterministic_proxy",
+		QualityBefore:      beforeMetrics.Quality,
+		QualityAfter:       afterMetrics.Quality,
+		HitRateDelta:       after.HitRate - before.HitRate,
+		FailureCountBefore: beforeMetrics.FailureCount,
+		FailureCountAfter:  afterMetrics.FailureCount,
+		GroundingBefore:    beforeMetrics.GroundingFailures,
+		GroundingAfter:     afterMetrics.GroundingFailures,
 	}, nil
+}
+
+func retrievalFromMetrics(metrics BatchMetrics, datasetHash string, report BatchReport) RetrievalRun {
+	run := RetrievalRun{
+		Strategy: metrics.Strategy, DatasetHash: datasetHash, Cases: metrics.Cases, HitRate: metrics.HitRate,
+		QualityMode: "deterministic_proxy", Quality: metrics.Quality, GroundingFailures: metrics.GroundingFailures,
+		PromptMode: metrics.PromptMode, TopK: metrics.TopK,
+	}
+	for _, result := range report.Results {
+		run.Results = append(run.Results, CaseResult{
+			ID: result.ID, ExpectedSource: result.ExpectedSource, RetrievedSources: result.RetrievedSources, Hit: result.Hit,
+		})
+	}
+	return run
 }
 
 var ErrExperimentNotFound = errors.New("experiment not found")

@@ -2,6 +2,7 @@ package evolution
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -22,8 +23,9 @@ func TestAttributeAssignsToolRetrievalAndPrompt(t *testing.T) {
 		{name: "unknown tool", in: CaseOutcome{ToolCalled: true, ToolName: "lookup", ToolQuery: "q", ToolError: `error: unknown tool "lookup"`}, layer: LayerTool, cause: CauseUnknownTool},
 		{name: "max iterations", in: CaseOutcome{MaxIterations: true, ToolError: "max iterations exceeded"}, layer: LayerTool, cause: CauseMaxIterations},
 		{name: "source miss", in: CaseOutcome{ToolCalled: true, ToolName: "search_docs", ToolQuery: "q", ExpectedSource: "a.go", RetrievedSources: []string{"b.go"}}, layer: LayerRetrieval, cause: CauseRetrievalMiss},
-		{name: "hit but unqualified", in: CaseOutcome{ToolCalled: true, ToolName: "search_docs", ToolQuery: "q", Hit: true, GroundTruth: "fact", FactScore: 0.25}, layer: LayerPrompt, cause: CausePromptUnqualified},
-		{name: "hit and qualified", in: CaseOutcome{ToolCalled: true, ToolName: "search_docs", ToolQuery: "q", Hit: true, GroundTruth: "fact", FactScore: 1, Answer: "fact"}, layer: "", cause: ""},
+		{name: "source hit but fact absent from context", in: CaseOutcome{ToolCalled: true, ToolName: "search_docs", ToolQuery: "q", Hit: true, GroundTruth: "fact", FactInContext: 0, FactScore: 0}, layer: LayerRetrieval, cause: CauseRetrievalChunkMiss},
+		{name: "context has fact but answer does not", in: CaseOutcome{ToolCalled: true, ToolName: "search_docs", ToolQuery: "q", Hit: true, GroundTruth: "fact", FactInContext: 1, FactScore: 0.25}, layer: LayerPrompt, cause: CausePromptUnqualified},
+		{name: "hit and qualified", in: CaseOutcome{ToolCalled: true, ToolName: "search_docs", ToolQuery: "q", Hit: true, GroundTruth: "fact", FactInContext: 1, FactScore: 1, Answer: "fact"}, layer: "", cause: ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -254,6 +256,52 @@ func TestNewUnsafeFailuresRejectGate(t *testing.T) {
 	}
 }
 
+func TestPolicyForConfigPreservesPromptAndTopK(t *testing.T) {
+	policy := PolicyForConfig(config.Config{ChunkStrategy: "recursive", PromptMode: PromptConcise, TopK: 5})
+	if policy.PromptMode != PromptConcise || policy.TopK != 5 || policy.Splitter.Name() != "recursive" {
+		t.Fatalf("policy=%+v splitter=%s", policy, policy.Splitter.Name())
+	}
+}
+
+func TestSecondLoopMeasuresPromotedPolicy(t *testing.T) {
+	docs := []rag.Document{{Source: "doc.txt", Text: strings.Repeat("zzzz ", 40) + "unique-needle-fact"}}
+	cases := []Case{{ID: "c1", Type: "qa", Question: "unique-needle-fact", GroundTruth: "unique-needle-fact", SourceDoc: "doc.txt"}}
+	mgr := config.NewManager()
+	mgr.Register("kb-agent", config.Config{Name: "kb-agent", SystemPrompt: "baseline", ChunkStrategy: "fixed", PromptMode: PromptEcho, TopK: 3})
+	opts := LoopOptions{DatasetPath: "tiny.json", Cases: cases, Docs: docs, DatasetHash: "hash-second", Manager: mgr, AgentName: "kb-agent", Baseline: BaselinePolicy()}
+	first, err := RunLoop(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	active, err := mgr.Acquire("kb-agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := active.Config()
+	active.Release()
+	opts.Baseline = PolicyForConfig(cfg)
+	second, err := RunLoop(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Baseline.Metrics.Strategy != cfg.ChunkStrategy && cfg.ChunkStrategy != "" {
+		t.Fatalf("second baseline strategy=%s config=%s", second.Baseline.Metrics.Strategy, cfg.ChunkStrategy)
+	}
+	if cfg.PromptMode != "" && second.Baseline.Metrics.PromptMode != cfg.PromptMode {
+		t.Fatalf("second baseline prompt=%s config=%s", second.Baseline.Metrics.PromptMode, cfg.PromptMode)
+	}
+	if cfg.TopK > 0 && second.Baseline.Metrics.TopK != cfg.TopK {
+		t.Fatalf("second baseline topk=%d config=%d", second.Baseline.Metrics.TopK, cfg.TopK)
+	}
+	if first.Promoted != nil && second.Promoted != nil &&
+		second.Promoted.TaskID == first.Promoted.TaskID &&
+		second.Promoted.ChunkStrategy == first.Promoted.ChunkStrategy &&
+		second.Promoted.PromptMode == first.Promoted.PromptMode &&
+		second.Promoted.TopK == first.Promoted.TopK {
+		t.Fatalf("same task promoted twice: %+v then %+v", first.Promoted, second.Promoted)
+	}
+}
+
 func TestClosedLoopPublic98(t *testing.T) {
 	chdirRepoRoot(t)
 	cases, docs, hash, err := LoadPublicCorpus(PublicDatasetPath)
@@ -294,21 +342,31 @@ func TestClosedLoopPublic98(t *testing.T) {
 	if report.Cases != PublicDatasetSize || len(report.Baseline.Results) != PublicDatasetSize {
 		t.Fatalf("report cases=%d results=%d", report.Cases, len(report.Baseline.Results))
 	}
-	if report.Baseline.Metrics.Quality <= 0 {
-		t.Fatalf("baseline quality=%v", report.Baseline.Metrics.Quality)
+	if hash != "1d29ca4e857a3ccda71f50b4f14fd79e55335073de108b98208c4826817d6cae" {
+		t.Fatalf("public corpus hash changed: %s", hash)
 	}
-	if report.Baseline.Metrics.FailureCount == 0 || len(report.Clusters) == 0 {
-		t.Fatalf("failures=%d clusters=%d", report.Baseline.Metrics.FailureCount, len(report.Clusters))
+	if report.Baseline.Metrics.QualityMode != "deterministic_proxy" {
+		t.Fatalf("quality mode=%s", report.Baseline.Metrics.QualityMode)
+	}
+	near(t, report.Baseline.Metrics.HitRate, 0.20408163265306123)
+	near(t, report.Baseline.Metrics.Quality, 0.43941985466042344)
+	if report.Baseline.Metrics.FailureCount != 98 || report.Baseline.Metrics.GroundingFailures != 78 {
+		t.Fatalf("baseline failures=%d grounding=%d", report.Baseline.Metrics.FailureCount, report.Baseline.Metrics.GroundingFailures)
 	}
 	layers := map[string]int{}
+	causes := map[string]int{}
 	for _, cluster := range report.Clusters {
 		if cluster.Count <= 0 || len(cluster.CaseIDs) != cluster.Count || cluster.Cause == "" {
 			t.Fatalf("cluster=%+v", cluster)
 		}
 		layers[cluster.Layer] += cluster.Count
+		causes[cluster.Cause] += cluster.Count
 	}
-	if layers[LayerRetrieval] == 0 && layers[LayerPrompt] == 0 {
-		t.Fatalf("no retrieval or prompt clusters: %+v", layers)
+	if layers[LayerRetrieval] != 98 || layers[LayerPrompt] != 0 || layers[LayerTool] != 0 {
+		t.Fatalf("layers=%v", layers)
+	}
+	if causes[CauseRetrievalMiss] != 78 || causes[CauseRetrievalChunkMiss] != 20 {
+		t.Fatalf("causes=%v", causes)
 	}
 	if len(report.Candidates) < 2 {
 		t.Fatalf("candidates=%d", len(report.Candidates))
@@ -323,29 +381,80 @@ func TestClosedLoopPublic98(t *testing.T) {
 		}
 		min, max := predictionBand(candidate.Task.Prediction)
 		predictions[candidate.Task.Prediction.Metric+":"+formatBand(min, max)] = struct{}{}
-		if candidate.Metrics.Quality < 0 || report.Baseline.Metrics.Quality < 0 {
-			t.Fatal("negative quality")
+		if candidate.Task.Layer == LayerPrompt {
+			t.Fatalf("prompt task generated although context misses are retrieval: %+v", candidate.Task)
+		}
+		if candidate.Metrics.Quality+1e-6 < report.Baseline.Metrics.Quality && candidate.Gate.Passed {
+			t.Fatalf("proxy regression promoted: %+v", candidate.Task.ID)
 		}
 	}
 	if len(predictions) < 2 {
 		t.Fatalf("predictions not distinct: %v", predictions)
 	}
-	if report.Promoted != nil {
-		active, err := mgr.Acquire("kb-agent")
-		if err != nil {
-			t.Fatal(err)
+	var topk *CandidateResult
+	for i := range report.Candidates {
+		candidate := &report.Candidates[i]
+		switch candidate.Task.ID {
+		case "retrieval-topk":
+			topk = candidate
+			if !candidate.Gate.Passed || !candidate.PredictionMatched || candidate.Metrics.FailureCount != 98 {
+				t.Fatalf("topk=%+v gate=%+v", candidate.Metrics, candidate.Gate)
+			}
+			near(t, candidate.Metrics.HitRate, 0.336734693877551)
+			near(t, candidate.Metrics.Quality, report.Baseline.Metrics.Quality)
+			near(t, candidate.ActualDelta, 0.13265306122448978)
+		case "retrieval-recursive":
+			if candidate.Gate.Passed || !candidate.PredictionMatched {
+				t.Fatalf("recursive gate=%+v", candidate.Gate)
+			}
+		case "retrieval-semantic", "retrieval-parent-child":
+			if candidate.Gate.Passed || candidate.PredictionMatched {
+				t.Fatalf("%s gate=%+v matched=%v", candidate.Task.ID, candidate.Gate, candidate.PredictionMatched)
+			}
 		}
-		defer active.Release()
-		if active.Config().Version != report.Promoted.Version || active.Config().Version < 2 {
-			t.Fatalf("active=%+v promoted=%+v", active.Config(), report.Promoted)
-		}
-		if active.Config().ChunkStrategy == "" || active.Config().SystemPrompt == "" {
-			t.Fatalf("active=%+v", active.Config())
-		}
+	}
+	if topk == nil || report.Promoted == nil || report.Promoted.TaskID != "retrieval-topk" || report.Promoted.Version != 2 || report.Promoted.TopK != 5 || report.Promoted.ChunkStrategy != "fixed" {
+		t.Fatalf("promoted=%+v", report.Promoted)
+	}
+	active, err := mgr.Acquire("kb-agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := active.Config()
+	active.Release()
+	if cfg.Version != 2 || cfg.TopK != 5 || cfg.ChunkStrategy != "fixed" || cfg.PromptMode != PromptEcho {
+		t.Fatalf("active=%+v", cfg)
+	}
+	secondManager := config.NewManager()
+	secondManager.Register("kb-agent", cfg)
+	second, err := RunLoop(LoopOptions{
+		DatasetPath: PublicDatasetPath,
+		Cases:       cases,
+		Docs:        docs,
+		DatasetHash: hash,
+		Baseline:    PolicyForConfig(cfg),
+		Manager:     secondManager,
+		AgentName:   "kb-agent",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Baseline.Metrics.TopK != 5 || second.Baseline.Metrics.PromptMode != PromptEcho || second.Baseline.Metrics.Strategy != "fixed" {
+		t.Fatalf("second baseline=%+v", second.Baseline.Metrics)
+	}
+	if second.Promoted != nil && second.Promoted.TaskID == "retrieval-topk" && second.Promoted.TopK == 5 {
+		t.Fatalf("same top-k task promoted again: %+v", second.Promoted)
 	}
 	md := report.Markdown()
 	if !strings.Contains(md, "98") || !strings.Contains(md, "门禁") {
 		t.Fatalf("markdown missing summary:\n%s", clipText(md, 400))
+	}
+}
+
+func near(t *testing.T, got, want float64) {
+	t.Helper()
+	if math.Abs(got-want) > 1e-12 {
+		t.Fatalf("got %.17g want %.17g", got, want)
 	}
 }
 

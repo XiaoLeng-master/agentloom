@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 
+	"github.com/XiaoLeng-master/agentloom/internal/config"
 	"github.com/XiaoLeng-master/agentloom/internal/rag"
 )
 
@@ -209,6 +210,20 @@ func retrievalSplitters() []retrievalChoice {
 		{splitterParams: splitterParams{name: "semantic"}, lo: 0.04, hi: 0.40},
 		{splitterParams: splitterParams{name: "parent-child", child: 20, parent: 80}, lo: 0.08, hi: 0.50},
 	}
+}
+
+// PolicyForConfig rebuilds the offline baseline from the config that is active now.
+// Prompt mode and TopK stay as configured so a second evolve does not re-measure echo/top-3.
+func PolicyForConfig(cfg config.Config) Policy {
+	policy := PolicyForStrategy(cfg.ChunkStrategy)
+	if cfg.PromptMode != "" {
+		policy.PromptMode = cfg.PromptMode
+	}
+	if cfg.TopK > 0 {
+		policy.TopK = cfg.TopK
+	}
+	policy.Name = fmt.Sprintf("%s-topk%d-%s-%s", policy.Splitter.Name(), policy.TopK, policy.PromptMode, policy.ToolMode)
+	return policy
 }
 
 // PolicyForStrategy maps an active chunk strategy back to the deterministic baseline.

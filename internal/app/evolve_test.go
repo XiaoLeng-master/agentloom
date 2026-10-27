@@ -112,11 +112,8 @@ func TestExperimentChangesSubsequentTraceVersion(t *testing.T) {
 			Count int    `json:"count"`
 		} `json:"cause_counts"`
 	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &experiment); err != nil || experiment.ID == "" {
+	if err := json.Unmarshal(rec.Body.Bytes(), &experiment); err != nil || experiment.ID == "" || experiment.AnswerQuality != "deterministic_proxy" {
 		t.Fatalf("experiment=%+v err=%v body=%s", experiment, err, rec.Body.String())
-	}
-	if !strings.HasPrefix(experiment.AnswerQuality, "deterministic_proxy:") {
-		t.Fatalf("answer quality=%s", experiment.AnswerQuality)
 	}
 	if len(experiment.Tasks) < 2 {
 		t.Fatalf("tasks=%s", rec.Body.String())
@@ -137,6 +134,9 @@ func TestExperimentChangesSubsequentTraceVersion(t *testing.T) {
 	if len(experiment.CauseCounts) == 0 || experiment.CauseCounts[0].Count <= 0 {
 		t.Fatalf("cause counts=%+v", experiment.CauseCounts)
 	}
+	if !strings.Contains(rec.Body.String(), `"proxy_mode":"deterministic_proxy"`) || !strings.Contains(rec.Body.String(), `"failures"`) {
+		t.Fatalf("evolve response missing proxy fields: %s", rec.Body.String())
+	}
 	get := httptest.NewRequest(http.MethodGet, "/v1/evolutions/"+experiment.ID, nil)
 	get.Header.Set("Authorization", "Bearer local-demo")
 	readback := httptest.NewRecorder()
@@ -156,6 +156,59 @@ func TestExperimentChangesSubsequentTraceVersion(t *testing.T) {
 	}
 	if after.ConfigVersion != experiment.Promoted.Version || after.ChunkStrategy != experiment.Promoted.ChunkStrategy || after.PromptMode != experiment.Promoted.PromptMode || after.TopK != experiment.Promoted.TopK {
 		t.Fatalf("promoted=%+v after=%+v", experiment.Promoted, after)
+	}
+}
+
+func TestEvolveBaselineFollowsActivePromptMode(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "note.txt")
+	if err := os.WriteFile(src, []byte("alpha beta gamma delta"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal([]map[string]string{{
+		"id": "c1", "type": "qa", "question": "alpha", "groundTruth": "alpha beta", "sourceDoc": src,
+	}})
+	dataset := filepath.Join(dir, "cases.json")
+	if err := os.WriteFile(dataset, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	mgr := config.NewManager()
+	mgr.Register("kb-agent", config.Config{Name: "kb-agent", SystemPrompt: "demo", ChunkStrategy: "fixed", PromptMode: "concise", TopK: 5})
+	a := New(nil).WithConfigManager(mgr).WithCorpusPath(dataset).WithExperimentHistory(filepath.Join(dir, "history"))
+	evolve := func() map[string]any {
+		req := httptest.NewRequest(http.MethodPost, "/v1/evolve", nil)
+		req.Header.Set("Authorization", "Bearer local-demo")
+		rec := httptest.NewRecorder()
+		a.Handler().ServeHTTP(rec, req)
+		if rec.Code != 200 {
+			t.Fatalf("evolve %d: %s", rec.Code, rec.Body.String())
+		}
+		var body map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		return body
+	}
+	first := evolve()
+	before, _ := first["before"].(map[string]any)
+	if before["prompt_mode"] != "concise" || before["top_k"] != float64(5) || before["strategy"] != "fixed" {
+		t.Fatalf("first baseline=%v", before)
+	}
+	second := evolve()
+	before, _ = second["before"].(map[string]any)
+	active, err := mgr.Acquire("kb-agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer active.Release()
+	cfg := active.Config()
+	if before["prompt_mode"] != cfg.PromptMode || int(before["top_k"].(float64)) != cfg.TopK || before["strategy"] != cfg.ChunkStrategy {
+		t.Fatalf("second baseline=%v config=%+v", before, cfg)
+	}
+	promoted, _ := first["promoted"].(map[string]any)
+	again, _ := second["promoted"].(map[string]any)
+	if promoted != nil && again != nil && promoted["task_id"] == again["task_id"] && promoted["chunk_strategy"] == again["chunk_strategy"] && promoted["prompt_mode"] == again["prompt_mode"] && promoted["top_k"] == again["top_k"] {
+		t.Fatalf("same task promoted twice: %v", promoted)
 	}
 }
 

@@ -25,7 +25,7 @@ func TestExecuteTempCorpusPrintsGate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"评测—归因—优化—复测门禁报告", "失败样本", "门禁", "答案质量代理"} {
+	for _, want := range []string{"评测—归因—优化—复测门禁报告", "失败样本", "门禁", "词法代理 deterministic_proxy"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("missing %s\n%s", want, text)
 		}

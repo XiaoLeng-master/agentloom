@@ -62,10 +62,23 @@ type App struct {
 	manager    *config.Manager
 	corpusPath string
 	history    *evolution.History
+	access     AccessPolicy
+	chatSlots  chan struct{}
 }
 
 // WithConfigManager makes each request acquire one immutable configuration version.
 func (a *App) WithConfigManager(manager *config.Manager) *App { a.manager = manager; return a }
+
+// WithAccessPolicy configures public and administrative HTTP boundaries.
+func (a *App) WithAccessPolicy(policy AccessPolicy) *App { a.access = policy; return a }
+
+// WithMaxConcurrentChats bounds downstream request amplification.
+func (a *App) WithMaxConcurrentChats(limit int) *App {
+	if limit > 0 {
+		a.chatSlots = make(chan struct{}, limit)
+	}
+	return a
+}
 
 // WithCorpusPath locates the public evaluation set for an offline experiment.
 func (a *App) WithCorpusPath(path string) *App { a.corpusPath = path; return a }
@@ -137,7 +150,7 @@ func NewWithModels(docs []rag.Document, models map[string]core.LLMClient) *App {
 	runtime.AddAgent(orchestrator.RolePlanner, core.NewAgent("planner", "Return a JSON array of subtasks with id and input fields. No markdown.", selectModel("planner"), nil, 1))
 	runtime.AddAgent(orchestrator.RoleExecutor, core.NewAgent("executor", "Use search_docs once for relevant evidence. Answer the full user question concisely, cite source paths, and distinguish target architecture from implemented behavior. If evidence is insufficient, say so.", selectModel("executor"), []core.Tool{searchTool{retrievers}}, 2))
 	runtime.AddAgent(orchestrator.RoleVerifier, core.NewAgent("verifier", "Return JSON with task_id and pass fields. Check the execution result. No markdown.", demoLLM{role: "verifier"}, nil, 1))
-	return &App{gate: gateway.New(localAuth{}, gateway.InjectionFilter{}, gateway.NewRateLimitFilter(60, time.Minute)), runtime: runtime, traces: map[string]Trace{}, modelMode: models != nil}
+	return &App{gate: gateway.New(gateway.InjectionFilter{}, gateway.NewRateLimitFilter(60, time.Minute)), runtime: runtime, traces: map[string]Trace{}, modelMode: models != nil, access: localAccessPolicy(), chatSlots: make(chan struct{}, 4)}
 }
 
 func (a *App) Handler() http.Handler {
@@ -153,7 +166,7 @@ func (a *App) Handler() http.Handler {
 }
 
 func (a *App) bench(w http.ResponseWriter, r *http.Request) {
-	if r.Header.Get("Authorization") != "Bearer local-demo" {
+	if !a.access.publicAllowed(r) {
 		write(w, 403, map[string]string{"error": "invalid token"})
 		return
 	}
@@ -173,7 +186,7 @@ func (a *App) bench(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) evolve(w http.ResponseWriter, r *http.Request) {
-	if r.Header.Get("Authorization") != "Bearer local-demo" {
+	if !a.access.adminAllowed(r) {
 		write(w, 403, map[string]string{"error": "invalid token"})
 		return
 	}
@@ -202,7 +215,7 @@ func (a *App) evolve(w http.ResponseWriter, r *http.Request) {
 		Cases:       cases,
 		Docs:        docs,
 		DatasetHash: hash,
-		Baseline:    evolution.PolicyForStrategy(cfg.ChunkStrategy),
+		Baseline:    evolution.PolicyForConfig(cfg),
 		Manager:     a.manager,
 		AgentName:   "kb-agent",
 	})
@@ -225,7 +238,7 @@ func (a *App) evolve(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) evolutions(w http.ResponseWriter, r *http.Request) {
-	if r.Header.Get("Authorization") != "Bearer local-demo" {
+	if !a.access.publicAllowed(r) {
 		write(w, 403, map[string]string{"error": "invalid token"})
 		return
 	}
@@ -242,7 +255,7 @@ func (a *App) evolutions(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) experiment(w http.ResponseWriter, r *http.Request) {
-	if r.Header.Get("Authorization") != "Bearer local-demo" {
+	if !a.access.publicAllowed(r) {
 		write(w, 403, map[string]string{"error": "invalid token"})
 		return
 	}
@@ -263,6 +276,17 @@ func (a *App) experiment(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) chat(w http.ResponseWriter, r *http.Request) {
+	if !a.access.publicAllowed(r) {
+		write(w, 403, map[string]string{"error": "invalid token"})
+		return
+	}
+	select {
+	case a.chatSlots <- struct{}{}:
+		defer func() { <-a.chatSlots }()
+	default:
+		write(w, http.StatusTooManyRequests, map[string]string{"error": "chat concurrency limit reached"})
+		return
+	}
 	var input struct {
 		Message string `json:"message"`
 	}
@@ -270,8 +294,7 @@ func (a *App) chat(w http.ResponseWriter, r *http.Request) {
 		write(w, 400, map[string]string{"error": "message required"})
 		return
 	}
-	token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-	ok, filter, reason := a.gate.Allow(r.Context(), gateway.Request{Tenant: "local", Token: token, Prompt: input.Message, AgentName: "demo"})
+	ok, filter, reason := a.gate.Allow(r.Context(), gateway.Request{Tenant: requestTenant(r), Prompt: input.Message, AgentName: "demo"})
 	if !ok {
 		write(w, 403, map[string]string{"error": filter + ": " + reason})
 		return
@@ -326,7 +349,7 @@ func (a *App) chat(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) trace(w http.ResponseWriter, r *http.Request) {
-	if r.Header.Get("Authorization") != "Bearer local-demo" {
+	if !a.access.publicAllowed(r) {
 		write(w, 403, map[string]string{"error": "invalid token"})
 		return
 	}
@@ -362,16 +385,6 @@ type strategyKey struct{}
 type promptModeKey struct{}
 type topKKey struct{}
 type searchTool struct{ retrievers map[string]*rag.Retriever }
-
-type localAuth struct{}
-
-func (localAuth) Name() string { return "local-auth" }
-func (localAuth) Allow(_ context.Context, r gateway.Request) (bool, string) {
-	if r.Token == "local-demo" {
-		return true, ""
-	}
-	return false, "invalid demo token"
-}
 
 func (s searchTool) Name() string { return "search_docs" }
 func (s searchTool) Schema() map[string]any {

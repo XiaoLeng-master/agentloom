@@ -2,6 +2,7 @@ package eval
 
 import (
 	"math"
+	"sort"
 	"strings"
 )
 
@@ -25,7 +26,13 @@ func (g GEval) Eval(t Trace) Score {
 	}
 	probs := prober(t.Answer, t.Expected.Answer)
 	var num, den float32
-	for tok, p := range probs {
+	tokens := make([]string, 0, len(probs))
+	for tok := range probs {
+		tokens = append(tokens, tok)
+	}
+	sort.Strings(tokens)
+	for _, tok := range tokens {
+		p := probs[tok]
 		if len(tok) != 1 || tok[0] < '1' || tok[0] > '5' || math.IsNaN(float64(p)) || math.IsInf(float64(p), 0) || p < 0 {
 			return Score{Name: "geval", Reason: "invalid judge distribution"}
 		}

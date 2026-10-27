@@ -17,6 +17,8 @@ type Result struct {
 	Quality           float64
 	ToolSuccess       float64
 	NewUnsafeFailures int
+	FailureCount      int
+	GroundingFailures int
 }
 
 // Prediction records a hypothesis declared before candidate evaluation.
@@ -66,10 +68,37 @@ func Judge(baseline, next Result, prediction Prediction) (Decision, error) {
 		return Decision{Reason: "incomparable case sets"}, ErrRejected
 	}
 	matched := MatchPrediction(baseline, next, prediction)
-	if next.HitRate < baseline.HitRate || next.Quality < baseline.Quality || next.NewUnsafeFailures > 0 {
+	// Quality is the deterministic_proxy aggregate. 1e-6 tolerates last-bit
+	// drift and still rejects a real drop. Failure count and new citation
+	// failures are hard checks; a weighted rendering score cannot enter here.
+	if next.HitRate < baseline.HitRate || next.Quality+1e-6 < baseline.Quality || next.NewUnsafeFailures > 0 || next.FailureCount > baseline.FailureCount {
 		return Decision{Passed: false, PredictionMatched: matched, Reason: "regression gate failed"}, ErrRejected
 	}
 	return Decision{Passed: true, PredictionMatched: matched, Reason: "offline gate passed"}, nil
+}
+
+// DecideCandidate applies Judge and then refuses a candidate whose hard
+// metrics did not improve. Equality is not a promotion: shortening a rendered
+// answer cannot move hit rate, proxy quality, failure count, or citations.
+func DecideCandidate(baseline, next Result, prediction Prediction) (Decision, error) {
+	decision, err := Judge(baseline, next, prediction)
+	if err != nil {
+		return decision, err
+	}
+	if !hardImproved(baseline, next) {
+		decision.Passed = false
+		decision.Reason = "hard metrics unchanged"
+		return decision, ErrRejected
+	}
+	return decision, nil
+}
+
+func hardImproved(baseline, next Result) bool {
+	const eps = 1e-6
+	return next.HitRate > baseline.HitRate+eps ||
+		next.Quality > baseline.Quality+eps ||
+		next.FailureCount < baseline.FailureCount ||
+		next.GroundingFailures < baseline.GroundingFailures
 }
 
 // Promote replaces the active config only after all deterministic guards pass.
