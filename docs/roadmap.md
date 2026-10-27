@@ -8,7 +8,7 @@
 | D2 | `internal/config`（热更新 + 引用计数）+ 并发单测 | 测试：替换中旧实例不中断 |
 | D3 | `internal/mcp`（stdio 适配 + 统一 Tool 接口） | 接一个官方 filesystem MCP server 跑通 |
 | D4 | `internal/rag`（4 种切分 + 向量库 + Top-K） | 本地 10 篇文档可检索 |
-| D5 | `datasets/rag_eval_80.json`（自建 80 条）+ `scripts/bench.sh` | 输出第一版 HitRate 表 |
+| D5 | `datasets/rag_eval_80.json`（首版 80 条，现 98 条，文件为 `datasets/rag_eval_98.json`）+ `scripts/bench.sh` | 输出第一版 HitRate 表 |
 | D6 | 切分策略基线对比 | 当前提交运行 `make bench` |
 | D7 | `internal/eval`（Trace + 4 评测器 + G-Eval） | baseline/optimized 出对比报告 |
 | D8 | `internal/gateway`（filter chain，可选）+ README + 架构图定稿 | 别人能照 README 跑起来 |

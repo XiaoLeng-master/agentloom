@@ -11,6 +11,10 @@ import (
 	"time"
 )
 
+// DefaultModel is the Chat Completions model used when Model is empty.
+// agentd uses the same value unless DEEPSEEK_MODEL overrides it.
+const DefaultModel = "deepseek-flash"
+
 // DeepSeekClient calls the official Chat Completions endpoint.
 type DeepSeekClient struct {
 	APIKey     string
@@ -33,7 +37,7 @@ func (c DeepSeekClient) Complete(ctx context.Context, msgs []Message) (Message, 
 	}
 	model := c.Model
 	if model == "" {
-		model = "deepseek-chat"
+		model = DefaultModel
 	}
 	items := make([]map[string]any, 0, len(msgs))
 	for _, m := range msgs {

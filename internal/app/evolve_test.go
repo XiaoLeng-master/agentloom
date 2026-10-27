@@ -31,8 +31,20 @@ func TestExperimentChangesSubsequentTraceVersion(t *testing.T) {
 	bench.Header.Set("Authorization", "Bearer local-demo")
 	preview := httptest.NewRecorder()
 	a.Handler().ServeHTTP(preview, bench)
-	if preview.Code != 200 || !strings.Contains(preview.Body.String(), `"answer_quality":"not_evaluated"`) {
-		t.Fatalf("bench %d: %s", preview.Code, preview.Body.String())
+	body := preview.Body.String()
+	if preview.Code != 200 || strings.Contains(body, "not_evaluated") || strings.Contains(body, "答案质量尚未完成") {
+		t.Fatalf("bench %d: %s", preview.Code, body)
+	}
+	for _, want := range []string{
+		`"source_hit":"来源命中"`,
+		`"lexical_proxy":"确定性词法代理已评"`,
+		`"real_answer":"真实回答未评"`,
+		`"quality_mode":"deterministic_proxy"`,
+		`"before_quality":`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("bench missing %s: %s", want, body)
+		}
 	}
 	active, err := mgr.Acquire("kb-agent")
 	if err != nil {
@@ -73,7 +85,7 @@ func TestExperimentChangesSubsequentTraceVersion(t *testing.T) {
 		ID            string `json:"id"`
 		AnswerQuality string `json:"answer_quality"`
 	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &experiment); err != nil || experiment.ID == "" || experiment.AnswerQuality != "deterministic_proxy" {
+	if err := json.Unmarshal(rec.Body.Bytes(), &experiment); err != nil || experiment.ID == "" || experiment.AnswerQuality != "确定性词法代理已评" {
 		t.Fatalf("experiment=%+v err=%v", experiment, err)
 	}
 	get := httptest.NewRequest(http.MethodGet, "/v1/evolutions/"+experiment.ID, nil)

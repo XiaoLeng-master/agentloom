@@ -172,10 +172,13 @@ func (a *App) bench(w http.ResponseWriter, r *http.Request) {
 		write(w, 503, map[string]string{"error": "public corpus unavailable"})
 		return
 	}
-	before := evolution.RunRetrieval(cases, docs, hash, rag.FixedSplitter{Size: 40})
-	after := evolution.RunRetrieval(cases, docs, hash, rag.RecursiveSplitter{Size: 60, Overlap: 10})
+	fixed := rag.FixedSplitter{Size: 40}
+	recursive := rag.RecursiveSplitter{Size: 60, Overlap: 10}
+	before := evolution.AttachHarness(evolution.RunRetrieval(cases, docs, hash, fixed), cases, docs, fixed)
+	after := evolution.AttachHarness(evolution.RunRetrieval(cases, docs, hash, recursive), cases, docs, recursive)
+	ev := evolution.DescribeEvaluation(before, after)
 	write(w, 200, map[string]any{"before": before, "after": after, "failures": evolution.DiagnoseRetrieval(before, after),
-		"actual_delta": after.HitRate - before.HitRate, "answer_quality": "not_evaluated"})
+		"actual_delta": after.HitRate - before.HitRate, "answer_quality": ev.LexicalProxy, "evaluation": ev})
 }
 
 func (a *App) evolve(w http.ResponseWriter, r *http.Request) {

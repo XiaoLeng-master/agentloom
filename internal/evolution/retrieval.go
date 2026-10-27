@@ -108,10 +108,8 @@ func LoadPublicCorpus(path string) ([]Case, []rag.Document, string, error) {
 
 // ImproveRetrieval evaluates a candidate, checks the gate, and replaces local config.
 func ImproveRetrieval(manager *config.Manager, name string, candidate config.Config, cases []Case, docs []rag.Document, hash string, before, after rag.Splitter, prediction Prediction) (RetrievalRun, RetrievalRun, Decision, error) {
-	baseline := RunRetrieval(cases, docs, hash, before)
-	next := RunRetrieval(cases, docs, hash, after)
-	baseline = withHarness(baseline, RunHarness(cases, docs, before))
-	next = withHarness(next, RunHarness(cases, docs, after))
+	baseline := AttachHarness(RunRetrieval(cases, docs, hash, before), cases, docs, before)
+	next := AttachHarness(RunRetrieval(cases, docs, hash, after), cases, docs, after)
 	candidate.ChunkStrategy = after.Name()
 	decision, err := Promote(manager, name, candidate,
 		Result{Cases: len(cases), HitRate: baseline.HitRate, Quality: baseline.Quality},
@@ -120,6 +118,11 @@ func ImproveRetrieval(manager *config.Manager, name string, candidate config.Con
 		decision.Reason = "deterministic proxy gate passed; real LLM Judge not enabled"
 	}
 	return baseline, next, decision, err
+}
+
+// AttachHarness records deterministic proxy scores on a retrieval run.
+func AttachHarness(run RetrievalRun, cases []Case, docs []rag.Document, splitter rag.Splitter) RetrievalRun {
+	return withHarness(run, RunHarness(cases, docs, splitter))
 }
 
 func withHarness(run RetrievalRun, h HarnessRun) RetrievalRun {

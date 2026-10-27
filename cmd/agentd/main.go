@@ -63,7 +63,7 @@ func main() {
 		models = map[string]core.LLMClient{}
 		model := os.Getenv("DEEPSEEK_MODEL")
 		if model == "" {
-			model = "deepseek-flash"
+			model = core.DefaultModel
 		}
 		for _, role := range []string{"executor"} {
 			client := core.DeepSeekClient{APIKey: key, Model: model, MaxTokens: 1200, NoThinking: true}

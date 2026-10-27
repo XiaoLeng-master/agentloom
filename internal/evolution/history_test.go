@@ -15,7 +15,7 @@ func TestHistorySurvivesNewReaderAndRejectsBadID(t *testing.T) {
 	}
 	reader := History{Dir: dir}
 	got, err := reader.Get(exp.ID)
-	if err != nil || got.ID != exp.ID || got.AnswerQuality != "not_evaluated" || len(got.Failures) != 1 || !got.Failures[0].ResolvedByCandidate {
+	if err != nil || got.ID != exp.ID || got.AnswerQuality != LabelLexicalProxyNotRun || got.Evaluation.SourceHit != LabelSourceHit || got.Evaluation.RealAnswer != LabelRealAnswerUnevaluated || len(got.Failures) != 1 || !got.Failures[0].ResolvedByCandidate {
 		t.Fatalf("got=%+v err=%v", got, err)
 	}
 	list, err := reader.List()

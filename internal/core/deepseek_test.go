@@ -8,6 +8,29 @@ import (
 	"testing"
 )
 
+func TestDeepSeekEmptyModelDefaultsToFlash(t *testing.T) {
+	var got string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Model string `json:"model"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Error(err)
+		}
+		got = body.Model
+		w.Write([]byte(`{"choices":[{"message":{"content":"ok"}}]}`))
+	}))
+	defer server.Close()
+	client := DeepSeekClient{APIKey: "test-key", Endpoint: server.URL}
+	msg, err := client.Complete(context.Background(), []Message{{Role: RoleUser, Content: "question"}})
+	if err != nil || msg.Content != "ok" {
+		t.Fatalf("msg=%+v err=%v", msg, err)
+	}
+	if got != DefaultModel || DefaultModel != "deepseek-flash" {
+		t.Fatalf("empty model sent %q, want deepseek-flash", got)
+	}
+}
+
 func TestDeepSeekToolRoundTrip(t *testing.T) {
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

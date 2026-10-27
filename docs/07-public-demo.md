@@ -4,11 +4,11 @@ AgentLoom 的公开演示边界是“可访问、可审计、可停止”的作�
 
 ## 本地模式
 
-不设置 `AGENTLOOM_PUBLIC_MODE` 时，Chat、Trace 和只读 Benchmark 可直接访问；会更新当前配置的 `POST /v1/evolve` 使用本地演示管理员令牌：
+不设置 `AGENTLOOM_PUBLIC_MODE` 时，Chat、Trace 和只读 Benchmark 可直接访问。`POST /v1/evolve` 的管理员令牌由进程内固定为 `local-demo`。`cmd/agentd` 只在公开模式读取 `AGENTLOOM_ADMIN_TOKEN`；在本地模式 export 它不会改变令牌。
 
 ```bash
-export AGENTLOOM_ADMIN_TOKEN=local-demo
 make run
+curl -H 'Authorization: Bearer local-demo' -X POST localhost:8080/v1/evolve
 ```
 
 ## 公开模式
@@ -28,6 +28,6 @@ make run
 
 ## 仍未声称完成的能力
 
-- 当前质量评测是 `deterministic_proxy`，用于复现检索上下文、引用和词法重合；尚未接入真实 LLM Judge。
+- 当前分开计三项：来源命中、确定性词法代理已评（检索片段与标注的词法重合、引用失败和通过率）、真实回答未评。尚未接入真实 LLM Judge。
 - Trace 已可查询并异步写入内存或 Redis，但尚未实现 Trace 触发的自动批评测、灰度发布和自动回滚。
 - Kafka、etcd、Milvus、用户系统、多租户和生产级密钥管理不属于当前公开演示的已交付范围。
