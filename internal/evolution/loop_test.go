@@ -352,15 +352,15 @@ func TestClosedLoopPublic98(t *testing.T) {
 	if report.Cases != PublicDatasetSize || len(report.Baseline.Results) != PublicDatasetSize {
 		t.Fatalf("report cases=%d results=%d", report.Cases, len(report.Baseline.Results))
 	}
-	if hash != "65135211c07420203ee0da76f4762432c9ae196bd258a477a4398384471d3ebb" {
+	if hash != "1d29ca4e857a3ccda71f50b4f14fd79e55335073de108b98208c4826817d6cae" {
 		t.Fatalf("public corpus hash changed: %s", hash)
 	}
 	if report.Baseline.Metrics.QualityMode != "deterministic_proxy" {
 		t.Fatalf("quality mode=%s", report.Baseline.Metrics.QualityMode)
 	}
-	near(t, report.Baseline.Metrics.HitRate, 0.19387755102040816)
-	near(t, report.Baseline.Metrics.Quality, 0.4401517048174021)
-	if report.Baseline.Metrics.FailureCount != 98 || report.Baseline.Metrics.GroundingFailures != 79 {
+	near(t, report.Baseline.Metrics.HitRate, 0.20408163265306123)
+	near(t, report.Baseline.Metrics.Quality, 0.43941985466042344)
+	if report.Baseline.Metrics.FailureCount != 98 || report.Baseline.Metrics.GroundingFailures != 78 {
 		t.Fatalf("baseline failures=%d grounding=%d", report.Baseline.Metrics.FailureCount, report.Baseline.Metrics.GroundingFailures)
 	}
 	layers := map[string]int{}
@@ -375,7 +375,7 @@ func TestClosedLoopPublic98(t *testing.T) {
 	if layers[LayerRetrieval] != 98 || layers[LayerPrompt] != 0 || layers[LayerTool] != 0 {
 		t.Fatalf("layers=%v", layers)
 	}
-	if causes[CauseRetrievalMiss] != 79 || causes[CauseRetrievalChunkMiss] != 19 {
+	if causes[CauseRetrievalMiss] != 78 || causes[CauseRetrievalChunkMiss] != 20 {
 		t.Fatalf("causes=%v", causes)
 	}
 	if len(report.Candidates) < 2 {
@@ -410,9 +410,9 @@ func TestClosedLoopPublic98(t *testing.T) {
 			if !candidate.Gate.Passed || !candidate.PredictionMatched || candidate.Metrics.FailureCount != 98 {
 				t.Fatalf("topk=%+v gate=%+v", candidate.Metrics, candidate.Gate)
 			}
-			near(t, candidate.Metrics.HitRate, 0.30612244897959184)
+			near(t, candidate.Metrics.HitRate, 0.336734693877551)
 			near(t, candidate.Metrics.Quality, report.Baseline.Metrics.Quality)
-			near(t, candidate.ActualDelta, 0.11224489795918369)
+			near(t, candidate.ActualDelta, 0.13265306122448978)
 		case "retrieval-recursive":
 			if candidate.Gate.Passed || !candidate.PredictionMatched {
 				t.Fatalf("recursive gate=%+v", candidate.Gate)
