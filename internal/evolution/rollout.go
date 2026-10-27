@@ -151,7 +151,11 @@ func (r *Rollout) persist(event RolloutEvent) (RolloutEvent, error) {
 
 func regressed(stable, canary Result) bool {
 	// 持平不算回落。比较的是调用方给出的窗口，不补样本。
-	return canary.HitRate < stable.HitRate || canary.Quality < stable.Quality || canary.NewUnsafeFailures > 0
+	return canary.HitRate < stable.HitRate ||
+		canary.Quality < stable.Quality ||
+		canary.NewUnsafeFailures > 0 ||
+		canary.FailureCount > stable.FailureCount ||
+		canary.GroundingFailures > stable.GroundingFailures
 }
 
 func rollbackReason(stable, canary Result) string {
@@ -160,7 +164,11 @@ func rollbackReason(stable, canary Result) string {
 		return "canary introduced unsafe failures"
 	case canary.HitRate < stable.HitRate:
 		return fmt.Sprintf("canary hit rate %.4f fell below stable %.4f", canary.HitRate, stable.HitRate)
-	default:
+	case canary.Quality < stable.Quality:
 		return fmt.Sprintf("canary quality %.4f fell below stable %.4f", canary.Quality, stable.Quality)
+	case canary.FailureCount > stable.FailureCount:
+		return fmt.Sprintf("canary failures %d rose above stable %d", canary.FailureCount, stable.FailureCount)
+	default:
+		return fmt.Sprintf("canary grounding failures %d rose above stable %d", canary.GroundingFailures, stable.GroundingFailures)
 	}
 }

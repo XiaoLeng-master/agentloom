@@ -30,11 +30,12 @@ const (
 	LayerRetrieval = "retrieval"
 	LayerTool      = "tool"
 
-	CauseToolError         = "tool_error"
-	CauseUnknownTool       = "unknown_tool"
-	CauseMaxIterations     = "max_iterations"
-	CauseRetrievalMiss     = "expected source absent from top-k retrieval"
-	CausePromptUnqualified = "retrieval hit but answer unqualified"
+	CauseToolError          = "tool_error"
+	CauseUnknownTool        = "unknown_tool"
+	CauseMaxIterations      = "max_iterations"
+	CauseRetrievalMiss      = "expected source absent from top-k retrieval"
+	CauseRetrievalChunkMiss = "source hit but ground truth absent from retrieved context"
+	CausePromptUnqualified  = "retrieved context contains ground truth but rendered answer does not"
 )
 
 // Policy is a deterministic agent stand-in: retrieval settings plus the
@@ -88,6 +89,7 @@ type CaseOutcome struct {
 	ConciseScore     float64          `json:"concise_score"`
 	CiteScore        float64          `json:"cite_score"`
 	Quality          float64          `json:"quality"`
+	GroundingFailure bool             `json:"grounding_failure"`
 	SafetyPass       bool             `json:"safety_pass"`
 	Failed           bool             `json:"failed"`
 	Layer            string           `json:"layer,omitempty"`
@@ -98,20 +100,22 @@ type CaseOutcome struct {
 
 // BatchMetrics aggregates one policy over the fixed case set.
 type BatchMetrics struct {
-	Policy          string             `json:"policy"`
-	Strategy        string             `json:"strategy"`
-	PromptMode      string             `json:"prompt_mode"`
-	ToolMode        string             `json:"tool_mode"`
-	TopK            int                `json:"top_k"`
-	DatasetHash     string             `json:"dataset_hash"`
-	Cases           int                `json:"cases"`
-	HitRate         float64            `json:"hit_rate"`
-	Quality         float64            `json:"quality"`
-	ToolSuccess     float64            `json:"tool_success"`
-	UnsafeFailures  int                `json:"unsafe_failures"`
-	FailureCount    int                `json:"failure_count"`
-	FailuresByLayer map[string]int     `json:"failures_by_layer"`
-	EvaluatorMeans  map[string]float64 `json:"evaluator_means"`
+	Policy            string             `json:"policy"`
+	Strategy          string             `json:"strategy"`
+	PromptMode        string             `json:"prompt_mode"`
+	ToolMode          string             `json:"tool_mode"`
+	TopK              int                `json:"top_k"`
+	DatasetHash       string             `json:"dataset_hash"`
+	Cases             int                `json:"cases"`
+	HitRate           float64            `json:"hit_rate"`
+	QualityMode       string             `json:"quality_mode"`
+	Quality           float64            `json:"quality"`
+	ToolSuccess       float64            `json:"tool_success"`
+	UnsafeFailures    int                `json:"unsafe_failures"`
+	FailureCount      int                `json:"failure_count"`
+	GroundingFailures int                `json:"grounding_failures"`
+	FailuresByLayer   map[string]int     `json:"failures_by_layer"`
+	EvaluatorMeans    map[string]float64 `json:"evaluator_means"`
 }
 
 // GateResult converts aggregate metrics into the release-gate shape.
@@ -123,6 +127,8 @@ func (m BatchMetrics) GateResult(newUnsafe int) Result {
 		Quality:           m.Quality,
 		ToolSuccess:       m.ToolSuccess,
 		NewUnsafeFailures: newUnsafe,
+		FailureCount:      m.FailureCount,
+		GroundingFailures: m.GroundingFailures,
 	}
 }
 
@@ -188,6 +194,7 @@ func scoreBatch(cases []Case, datasetHash string, policy Policy, retriever *rag.
 		eval.SkillEvaluator{},
 		eval.AgentEvaluator{MaxLatencyMs: 1000},
 	)
+	proxyRegistry := newProxyRegistry()
 	workers := workerCount(len(cases))
 	jobs := make(chan int)
 	var wg sync.WaitGroup
@@ -196,7 +203,7 @@ func scoreBatch(cases []Case, datasetHash string, policy Policy, retriever *rag.
 		go func() {
 			defer wg.Done()
 			for idx := range jobs {
-				results[idx] = evalCase(cases[idx], retriever, policy, registry)
+				results[idx] = evalCase(cases[idx], retriever, policy, registry, proxyRegistry)
 			}
 		}()
 	}
@@ -225,7 +232,7 @@ func workerCount(n int) int {
 	return w
 }
 
-func evalCase(c Case, retriever *rag.Retriever, policy Policy, registry *eval.Registry) CaseOutcome {
+func evalCase(c Case, retriever *rag.Retriever, policy Policy, registry, proxyRegistry *eval.Registry) CaseOutcome {
 	out := CaseOutcome{
 		ID:             c.ID,
 		Type:           c.Type,
@@ -258,7 +265,11 @@ func evalCase(c Case, retriever *rag.Retriever, policy Policy, registry *eval.Re
 		out.ToolCalled = true
 		out.ToolName = "search_docs"
 		out.ToolQuery = c.Question
-		for _, hit := range retriever.Retrieve(c.Question, policy.TopK) {
+		hits := retriever.Retrieve(c.Question, policy.TopK)
+		proxy := ScoreProxy(c, hits, proxyRegistry)
+		out.Quality = proxy.Quality
+		out.GroundingFailure = proxy.GroundingFailure
+		for _, hit := range hits {
 			text := clipRunes(hit.Text, 1200)
 			passages = append(passages, passage{Source: hit.Source, Text: text})
 			out.RetrievedSources = append(out.RetrievedSources, hit.Source)
@@ -271,9 +282,6 @@ func evalCase(c Case, retriever *rag.Retriever, policy Policy, registry *eval.Re
 	out.Answer = renderAnswer(policy.PromptMode, c.Question, passages)
 	out.FactInContext = factScore(joinPassages(passages), c.GroundTruth)
 	out.FactScore = factScore(out.Answer, c.GroundTruth)
-	out.ConciseScore = conciseScore(out.Answer, c.GroundTruth)
-	out.CiteScore = citeScore(out.Answer)
-	out.Quality = 0.5*out.FactScore + 0.3*out.ConciseScore + 0.2*out.CiteScore
 	out.SafetyPass = safetyPass(out.Answer)
 	out.Scores = scoreEvaluators(c, out, registry)
 	return Attribute(out)
@@ -315,10 +323,12 @@ func scoreEvaluators(c Case, out CaseOutcome, registry *eval.Registry) []Evaluat
 	return scores
 }
 
-// Attribute classifies one case from Trace signals.
-// Tool traces win: tool error, unknown tool, or ErrMaxIterations.
-// Otherwise a missing expected source is retrieval, and a source hit whose
-// answer does not cover the ground truth is prompt.
+// Attribute classifies one offline stand-in record.
+// Tool signals win: tool error, unknown tool, or max iterations.
+// A missing expected source is retrieval. A source hit whose retrieved
+// context does not contain the ground truth is a chunk miss, still retrieval.
+// Prompt is only a source hit where the context contains the ground truth
+// and the rendered answer does not.
 func Attribute(out CaseOutcome) CaseOutcome {
 	out.Failed = false
 	out.Layer = ""
@@ -326,27 +336,39 @@ func Attribute(out CaseOutcome) CaseOutcome {
 	out.Signals = nil
 	switch {
 	case out.MaxIterations || strings.Contains(out.ToolError, "max iterations exceeded"):
-		return fail(out, LayerTool, CauseMaxIterations, "trace=max iterations exceeded")
+		return fail(out, LayerTool, CauseMaxIterations, "simulated tool signal=max iterations exceeded")
 	case strings.Contains(out.ToolError, "unknown tool") || (out.ToolCalled && out.ToolName != "" && out.ToolName != "search_docs"):
 		name := out.ToolName
 		if name == "" {
 			name = "unknown"
 		}
-		return fail(out, LayerTool, CauseUnknownTool, "trace=unknown tool "+name)
+		return fail(out, LayerTool, CauseUnknownTool, "simulated tool signal=unknown tool "+name)
 	case out.ToolError != "":
-		return fail(out, LayerTool, CauseToolError, "trace="+out.ToolError)
+		return fail(out, LayerTool, CauseToolError, "simulated tool signal="+out.ToolError)
 	case !out.Hit:
 		return fail(out, LayerRetrieval, CauseRetrievalMiss,
 			"expected="+out.ExpectedSource,
 			"retrieved="+strings.Join(out.RetrievedSources, ","),
 			fmt.Sprintf("rank=%d", out.Rank))
+	case !contextHasFacts(out):
+		return fail(out, LayerRetrieval, CauseRetrievalChunkMiss,
+			"source_hit=true",
+			fmt.Sprintf("fact_in_context=%.4f", out.FactInContext))
 	case !answerQualified(out):
 		return fail(out, LayerPrompt, CausePromptUnqualified,
 			"source_hit=true",
+			fmt.Sprintf("fact_in_context=%.4f", out.FactInContext),
 			fmt.Sprintf("fact_in_answer=%.4f", out.FactScore))
 	default:
 		return out
 	}
+}
+
+func contextHasFacts(out CaseOutcome) bool {
+	if strings.TrimSpace(out.GroundTruth) == "" {
+		return true
+	}
+	return out.FactInContext+1e-9 >= 1
 }
 
 func answerQualified(out CaseOutcome) bool {
@@ -450,6 +472,7 @@ func aggregate(policy Policy, datasetHash string, results []CaseOutcome) BatchMe
 		PromptMode:  policy.PromptMode,
 		ToolMode:    policy.ToolMode,
 		TopK:        policy.TopK,
+		QualityMode: "deterministic_proxy",
 		DatasetHash: datasetHash,
 		Cases:       len(results),
 		FailuresByLayer: map[string]int{
@@ -469,6 +492,9 @@ func aggregate(policy Policy, datasetHash string, results []CaseOutcome) BatchMe
 			metrics.HitRate++
 		}
 		metrics.Quality += result.Quality
+		if result.GroundingFailure {
+			metrics.GroundingFailures++
+		}
 		if result.ToolCalled && result.ToolError == "" && result.ToolName == "search_docs" && strings.TrimSpace(result.ToolQuery) != "" {
 			metrics.ToolSuccess++
 		}
@@ -551,28 +577,6 @@ func splitFacts(groundTruth string) []string {
 		}
 	}
 	return out
-}
-
-func conciseScore(answer, groundTruth string) float64 {
-	n := len([]rune(strings.TrimSpace(answer)))
-	if n == 0 {
-		return 0
-	}
-	budget := len([]rune(strings.TrimSpace(groundTruth))) * 4
-	if budget < 80 {
-		budget = 80
-	}
-	if n <= budget {
-		return 1
-	}
-	return float64(budget) / float64(n)
-}
-
-func citeScore(answer string) float64 {
-	if strings.Contains(answer, "Source:") {
-		return 1
-	}
-	return 0
 }
 
 func safetyPass(answer string) bool {

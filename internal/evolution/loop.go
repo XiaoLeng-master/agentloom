@@ -1,6 +1,7 @@
 package evolution
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/XiaoLeng-master/agentloom/internal/config"
@@ -28,6 +29,7 @@ type CandidateResult struct {
 	PredictionMatched bool             `json:"prediction_matched"`
 	Gate              Decision         `json:"gate"`
 	NewUnsafeFailures int              `json:"new_unsafe_failures"`
+	Results           []CaseOutcome    `json:"-"`
 }
 
 // Promotion is the candidate installed into the local config manager.
@@ -103,16 +105,17 @@ func RunLoop(opts LoopOptions) (LoopReport, error) {
 		Tasks:       []TaskRecord{},
 		CauseCounts: CountByCause(baseReport.Failures()),
 		Notes: []string{
-			"答案质量是确定性代理：事实覆盖、简洁度、引用的加权，不是 LLM Judge。不合格指检索已命中时期望事实没有完整出现在答案里。",
-			"归因读取 Trace 信号：工具报错、unknown tool、max iterations exceeded 归工具层；期望来源不在检索结果里归检索层；来源命中但答案不合格归 Prompt 层。",
-			"每条样本另外经过 prompt / rag / skill / agent 四个规则评测器。PromptEvaluator 的空白分词 Jaccard 不参与分层，因为公开集以中文为主。",
-			"预测区间在复测之前由该层失败占比声明，复测之后才记录实际增量是否落在区间内。",
-			"未调用外部 LLM 或付费 API。执行器是确定性替身：echo 复述检索片段，concise 按问句重合抽取短句。",
-			"门禁通过后只把候选放进进程内灰度，不整进程 Reload，不写 etcd。放量和回滚由后续观测窗口决定。",
+			"评测是离线确定性替身：自己检索并渲染回答，不经过 Chat 的 Planner/Executor/Verifier，也不是生成答案质量或 LLM Judge。",
+			"词法代理 deterministic_proxy 用 groundTruth 与首个检索片段的词法重叠打分，并统计引用是否覆盖期望来源。它和来源命中、渲染回答里的事实覆盖是三项不同指标。",
+			"归因读取模拟调用记录：工具报错、unknown tool、max iterations 归工具层；期望来源不在检索结果里，或来源命中但上下文没有 ground truth，归检索层；只有上下文含有 ground truth 而渲染回答没有时才归 Prompt 层。",
+			"门禁要求来源命中不降、词法代理不降（1e-6）、不新增引用失败、归因失败数不增加，并且至少一项硬指标变好。把回答变短不能单独过门禁。预测未命中会记录，但不单独决定晋升。",
+			"预测区间在复测之前由该层失败占比乘固定系数得到，不是历史校准值。",
+			"未调用外部 LLM 或付费 API。公开基线的工具策略是 search，工具层失败只出现在注入的工具模式测试里。",
+			"门禁通过后只把候选放进进程内灰度，不整进程 Reload，不写 etcd。观测窗口里来源命中下降、词法代理下降、新增引用失败、归因失败数上升或引用失败数上升就自动回滚；持平或变好则按 10%、50%、100% 放量。语料包含 README 和部分源文件，改那些文件会改变数据集哈希和指标。",
 		},
 	}
 	if baseReport.Metrics.FailuresByLayer[LayerTool] == 0 {
-		report.Notes = append(report.Notes, "本次基线 Trace 没有 tool error、unknown tool 或 max iterations exceeded，工具层失败数为 0。这三类信号由单元测试覆盖。")
+		report.Notes = append(report.Notes, "本次基线的模拟调用记录没有 tool error、unknown tool 或 max iterations exceeded，工具层失败数为 0。这三类信号由单元测试覆盖。")
 	}
 	if len(tasks) == 0 {
 		report.Notes = append(report.Notes, "归因结果没有产生可执行的优化候选。")
@@ -123,9 +126,15 @@ func RunLoop(opts LoopOptions) (LoopReport, error) {
 	for _, task := range tasks {
 		policy := task.Apply(baseline)
 		after := scoreBatch(opts.Cases, opts.DatasetHash, policy, cache.get(policy))
-		unsafe := newUnsafeCount(baseReport, after)
-		nextGate := after.Metrics.GateResult(unsafe)
-		decision, _ := Judge(baseGate, nextGate, task.Prediction)
+		citationDelta := after.Metrics.GroundingFailures - baseReport.Metrics.GroundingFailures
+		if citationDelta < 0 {
+			citationDelta = 0
+		}
+		nextGate := after.Metrics.GateResult(citationDelta)
+		decision, err := DecideCandidate(baseGate, nextGate, task.Prediction)
+		if err != nil && !errors.Is(err, ErrRejected) {
+			return report, err
+		}
 		delta, _, _ := predictedDelta(baseGate, nextGate, task.Prediction)
 		candidate := CandidateResult{
 			Task:              task,
@@ -133,7 +142,8 @@ func RunLoop(opts LoopOptions) (LoopReport, error) {
 			ActualDelta:       delta,
 			PredictionMatched: decision.PredictionMatched,
 			Gate:              decision,
-			NewUnsafeFailures: unsafe,
+			NewUnsafeFailures: citationDelta,
+			Results:           after.Results,
 		}
 		report.Candidates = append(report.Candidates, candidate)
 		report.Tasks = append(report.Tasks, TaskRecord{
@@ -169,6 +179,10 @@ func RunLoop(opts LoopOptions) (LoopReport, error) {
 		}
 		return report, nil
 	}
+	if percent, active := opts.Manager.CanaryPercent(opts.AgentName); active {
+		report.Notes = append(report.Notes, fmt.Sprintf("已有 %d%% 灰度在进行。本次基线按稳定配置复测，不重复启动候选。", percent))
+		return report, nil
+	}
 	cfg := config.Config{
 		Name:          opts.AgentName,
 		SystemPrompt:  fmt.Sprintf("Closed-loop candidate %s. %s", best.Task.ID, best.Task.Action),
@@ -199,11 +213,14 @@ func RunLoop(opts LoopOptions) (LoopReport, error) {
 }
 
 func betterCandidate(a, b CandidateResult) bool {
-	if a.Metrics.Quality != b.Metrics.Quality {
-		return a.Metrics.Quality > b.Metrics.Quality
+	if a.Metrics.FailureCount != b.Metrics.FailureCount {
+		return a.Metrics.FailureCount < b.Metrics.FailureCount
 	}
 	if a.Metrics.HitRate != b.Metrics.HitRate {
 		return a.Metrics.HitRate > b.Metrics.HitRate
+	}
+	if a.Metrics.Quality != b.Metrics.Quality {
+		return a.Metrics.Quality > b.Metrics.Quality
 	}
 	return a.Task.Version < b.Task.Version
 }

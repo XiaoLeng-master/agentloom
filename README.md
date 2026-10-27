@@ -39,8 +39,8 @@ agentloom 把这三件事做在同一套平台里，并且**让每一环都咬�
 | 特性 | 说明 | 状态 |
 |---|---|---|
 | **多 Agent 分层协作** | Planner / Executor / Verifier 角色池与消息契约；子任务当前串行执行 | ✅ |
-| **Harness 自进化闭环** | `make loop` 与 `POST /v1/evolve` 在固定 98 条上批量评测，按 Trace 规则把失败归到 Prompt/检索/工具层并按原因计数，再由结构化优化任务驱动多个候选、自动复测和门禁。灰度与自动回滚未做 | 🚧 |
-| **预测式归因** | 每个优化任务在复测前声明自己的预期区间（层、原因、候选配置、区间），复测后记录预测是否成立。不再使用写死的 0.10–0.25 | 🚧 |
+| **Harness 自进化闭环** | `make loop` 与 `POST /v1/evolve` 在固定 98 条上做离线复测：模拟调用记录归因到检索/Prompt/工具层，结构化任务生成候选，再用来源命中、词法代理、引用失败和归因失败数做门禁。不是 Chat 运行时 Trace，不是生成答案质量，也不是 LLM Judge。门禁通过后进入进程内灰度：按租户哈希分流，观测窗口回落自动回滚，稳定则从 10% 放到 50% 再放到 100%。`make canary` 用命令给定的窗口复现这两条路径，不是 98 条公开集的在线测量。etcd 灰度源仍未实现 | 🚧 |
+| **预测式归因** | 每个优化任务在复测前用该层失败占比乘固定系数声明区间，复测后记录预测是否成立。预测未命中会留下，但不能单独决定晋升 | 🚧 |
 | **配置热更新** | 进程内引用计数替换；etcd Source 尚未实现 | ✅ |
 | **MCP 双传输适配** | stdio / HTTP JSON-RPC；请求取消、响应关联校验与有限 JSON Schema 参数校验；写工具默认不重试 | 🚧 |
 | **可评测 RAG** | 4 种切分策略可插拔 + 自建 98 条标注评估集，HitRate@K 可一键复现 | ✅ |
@@ -61,6 +61,7 @@ cd agentloom
 make verify      # 格式整理 + vet + 全量 race 测试
 make bench       # 输出当前提交的切分策略 HitRate@K 对比表
 make loop        # 98 条评测→归因聚类→多候选→自动复测门禁（确定性替身，不调用外部模型）
+make canary      # 进程内灰度：给定窗口复现放量和回滚（不是公开集实测，也不是在线流量）
 make run         # 启动 HTTP 入口 agentd，监听 :8080
 go run ./cmd/evolve # 与 make loop 相同的任务驱动闭环，输出归因、候选和门禁报告
 curl localhost:8080/health   # {"status":"ok","agents":["kb-agent"]}
@@ -68,7 +69,7 @@ curl localhost:8080/health   # {"status":"ok","agents":["kb-agent"]}
 
 `make run` 后打开 `http://localhost:8080/`，可在本地工作台使用 Chat、Trace、Benchmark 三个页面。Benchmark 首次通过只读 `GET /v1/bench` 展示基线，点击复测才调用会更新本地配置的 `POST /v1/evolve`。前端由同一个 Go 服务提供；在 `web/` 执行 `npm ci && npm run build` 可重新构建嵌入的静态资源（需 Node.js/npm）。仓库已包含构建产物，普通运行无需安装前端依赖。浏览器不接触 `DEEPSEEK_API_KEY`。
 
-`make loop` 和 `go run ./cmd/evolve` 跑同一条任务驱动闭环：固定 98 条、按原因聚类的失败，以及每个候选的层级、原因、配置和预测区间。复测后记录门禁是否通过、预测是否成立。服务运行时可用本地演示 token 调用 `POST /v1/evolve`；响应里的 `tasks` 就是这些结构化任务。实验写入本地 `.agentloom/evolutions/`，通过 `GET /v1/evolutions` 或 `GET /v1/evolutions/{id}` 读回。只有门禁通过的候选会替换本地配置，后续 `/v1/chat` 的 Trace 会显示新的配置版本和切分策略。答案质量是确定性事实覆盖代理，不是 LLM Judge。没有定时评测，也没有灰度或自动回滚。数字以当次运行为准。
+`make loop` 和 `go run ./cmd/evolve` 跑同一条离线闭环：固定 98 条、按原因聚类，以及每个候选的层级、原因、配置和预测区间。评测器自己检索并渲染回答，不经过 Planner/Executor/Verifier。来源命中、词法代理（`deterministic_proxy`：groundTruth 与首个检索片段的词法重叠）、渲染回答里的事实覆盖是三项不同指标。门禁比较来源命中不降、词法代理不降（1e-6）、不新增引用失败、归因失败数不增加，并且至少一项硬指标变好；只把回答变短不能晋升。预测未命中会写入结果，但不单独决定晋升。工具层失败在公开基线的 search 策略下不会出现，只在注入的工具模式测试里出现。服务运行时，本地管理员令牌 `local-demo` 可以调用 `POST /v1/evolve`；公开只读访问不需要这个令牌。响应里的 `tasks` 是结构化任务。实验写入本地 `.agentloom/evolutions/`。语料包含 README 和部分源文件，改这些文件会改变哈希和指标，数字以该提交的 `make loop` 输出为准。在这句话写入时的测量里，基线 98 条全部被归因为失败：检索层包含来源未命中和“来源命中但上下文没有 ground truth”，Prompt 层与工具层为 0。唯一晋升的是提高 TopK 的检索任务，来源命中上升且该任务的预测命中，归因失败数没有下降。semantic 与 parent-child 的预测未命中，未命中不会被当成通过。没有定时评测。门禁通过后候选进入进程内灰度，不整进程替换稳定配置。`make canary` 用命令给定的观测窗口分别复现灰度到放量和灰度到回滚；这些窗口不是 98 条公开集的测量，也不是在线流量。etcd 灰度发布仍未实现。
 
 本地端到端演示（确定性演示模型、内存文档检索；不是在线 LLM 或生产知识库）：
 
@@ -80,7 +81,7 @@ curl -H 'Authorization: Bearer local-demo' -H 'Content-Type: application/json' \
 curl -H 'Authorization: Bearer local-demo' localhost:8080/v1/traces/<trace_id>
 ```
 
-演示链路经过本地网关、Planner、Executor 的 RAG Tool 和 Verifier。服务从公开的 README 和架构文档建立检索索引；Trace 的 `retrievals` 记录实际返回给 Executor 的片段和来源。初始配置为 fixed 切分。`POST /v1/evolve` 按当次归因生成候选，只有复测门禁通过才替换本地配置，切到哪一种切分由任务决定，不会固定改成 recursive。重启服务会重置配置，实验历史仍保留。默认使用确定性演示模型；设置本地环境变量 `DEEPSEEK_API_KEY` 后，Executor 使用 DeepSeek 官方 Chat Completions API 的 `deepseek-chat`，演示 Planner 保持单任务规则，Verifier 使用确定性非空输出规则（并不验证答案事实正确性）。Key 仅由 Go 服务读取，请勿写入仓库或浏览器。DeepSeek 是生成模型，检索仍使用 HashEmbedder。Trace 在响应前写入进程内存；如需跨进程保留，可执行 `docker compose up -d redis`，再设置 `AGENTLOOM_REDIS_ADDR=127.0.0.1:16379` 启动服务。后台队列异步写 Redis，请求不等待持久化；队列满或写入失败可能丢失跨进程记录，关停时会排空已接收事件。Redis 启动检查失败会报错。远端 MCP 及 Trace 驱动的定时批评测尚未接入此入口；Kafka、etcd、Milvus 仍未落地。
+演示链路经过本地网关、Planner、Executor 的 RAG Tool 和 Verifier。服务从公开的 README 和架构文档建立检索索引；Trace 的 `retrievals` 记录实际返回给 Executor 的片段和来源。初始配置为 fixed 切分。`POST /v1/evolve` 按当次归因生成候选，只有硬指标门禁通过才把候选放进灰度，不整进程替换稳定配置，也不会固定改成 recursive。已有灰度时再次调用按稳定配置复测，不重复启动同一候选。连续调用时，基线是当前稳定配置的切分、Prompt 渲染模式和 TopK，而不是重新从 echo/top-3 起算。重启服务会重置配置，实验历史仍保留。本地模式的管理员令牌是 `local-demo`；公开模式才读取 `AGENTLOOM_ADMIN_TOKEN` 和可选的 `AGENTLOOM_PUBLIC_TOKEN`。默认使用确定性演示模型；设置本地环境变量 `DEEPSEEK_API_KEY` 后，Executor 使用 DeepSeek 官方 Chat Completions API 的 `deepseek-flash`（可用 `DEEPSEEK_MODEL` 覆盖），关闭 thinking 并限制 1200 tokens；演示 Planner 保持单任务规则，Verifier 使用确定性非空输出规则（并不验证答案事实正确性）。Key 仅由 Go 服务读取，请勿写入仓库或浏览器。DeepSeek 是生成模型，检索仍使用 HashEmbedder。这一默认模型配置只验证了请求构造，没有在本仓库里用真实 Key 做端到端验收。Trace 在响应前写入进程内存；如需跨进程保留，可执行 `docker compose up -d redis`，再设置 `AGENTLOOM_REDIS_ADDR=127.0.0.1:16379` 启动服务。后台队列异步写 Redis，请求不等待持久化；队列满或写入失败可能丢失跨进程记录，关停时会排空已接收事件。Redis 启动检查失败会报错。当前仍未接入真实 LLM Judge 和 Trace 驱动的定时评测。进程内灰度与自动回滚由 `make canary` 用给定窗口复现；etcd 灰度源、Kafka、Milvus 仍未落地。
 
 环境：
 - Go 1.22+

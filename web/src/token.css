@@ -1,0 +1,16 @@
+.token {
+  display: block;
+  margin: 18px 0;
+  color: #60717d;
+  font-size: 13px;
+}
+
+.token input {
+  display: block;
+  width: 100%;
+  max-width: 420px;
+  margin-top: 7px;
+  border: 1px solid #cddbdc;
+  border-radius: 8px;
+  padding: 9px 11px;
+}

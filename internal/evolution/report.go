@@ -19,7 +19,8 @@ func (r LoopReport) Markdown() string {
 	fmt.Fprintf(&b, "| 指标 | 值 |\n|---|---|\n")
 	fmt.Fprintf(&b, "| 策略 | %s / %s / top-%d |\n", m.Strategy, m.PromptMode, m.TopK)
 	fmt.Fprintf(&b, "| HitRate | %.4f |\n", m.HitRate)
-	fmt.Fprintf(&b, "| 答案质量代理 | %.4f |\n", m.Quality)
+	fmt.Fprintf(&b, "| 词法代理 deterministic_proxy | %.4f |\n", m.Quality)
+	fmt.Fprintf(&b, "| 引用失败 | %d |\n", m.GroundingFailures)
 	fmt.Fprintf(&b, "| 工具成功率 | %.4f |\n", m.ToolSuccess)
 	fmt.Fprintf(&b, "| 失败样本 | %d |\n", m.FailureCount)
 	fmt.Fprintf(&b, "| 归因分层 | prompt=%d，retrieval=%d，tool=%d |\n",
