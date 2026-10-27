@@ -29,6 +29,8 @@
 Trace 是 Agent 的黑匣子，高频写入（每请求 N 条 span）。同步写库会阻塞会话主链路。
 Kafka 的额外好处：可回放做回归——同一批 Trace 重跑评测，验证修复有效性。
 
+当前实现：这是可选组件。未配置 broker 时请求路径仍把 Trace 放进内存，并在配置了 Redis 时用 `ToyQueue` 异步落 Redis。配置了 `AGENTLOOM_KAFKA_BROKERS` 后，同一条写入改为本地缓冲再发给 Kafka；消费端用 `MonthlySharder` 的 `YYYY-MM` 键建 `traces_YYYY_MM` 表，以 `trace_id` 主键忽略重复，重试耗尽写入死信主题。本地启动见 `docs/09-kafka-trace.md`。
+
 ## 5. 为什么每次优化带"预测"
 
 分数涨跌只有 1 bit 信息，且无法归因。

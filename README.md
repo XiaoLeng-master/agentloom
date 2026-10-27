@@ -47,7 +47,7 @@ agentloom 把这三件事做在同一套平台里，并且**让每一环都咬�
 | **评测 harness** | Trace + 规则代理评测器 + 词法测试 Prober + Markdown 报告；真实 Judge 尚未接入 | 🚧 |
 | **网关治理链** | Filter Chain：本地演示 token、关键词注入信号、单机租户限流 | 🚧 |
 | **插件化运行时** | IoC 生命周期：planner/memory/tool/evaluator 可热插拔，mount/reload/dispose 不重置 agent 状态 | ✅ |
-| **后端底座** | 可选 Redis 持久化演示 Trace；内存队列、按月分组及内存缓存；Kafka、etcd、Milvus 与 DLQ 尚未接入 | 🚧 |
+| **后端底座** | 未设置 `AGENTLOOM_KAFKA_BROKERS` 时仍用内存 ToyQueue，可选 Redis 持久化演示 Trace；设置后 Trace 经 Kafka 削峰，按 trace_id 幂等写入按月 SQLite，重试耗尽进死信队列。etcd、Milvus 尚未接入 | 🚧 |
 
 > ✅ = 已实现且有测试 / 🚧 = 组件就位，运行时串联推进中 / 📋 = 设计完成待实现
 
@@ -79,11 +79,11 @@ curl -H 'Authorization: Bearer local-demo' -H 'Content-Type: application/json' \
 curl -H 'Authorization: Bearer local-demo' localhost:8080/v1/traces/<trace_id>
 ```
 
-演示链路经过本地网关、Planner、Executor 的 RAG Tool 和 Verifier。服务从公开的 README 和架构文档建立检索索引；Trace 的 `retrievals` 记录实际返回给 Executor 的片段和来源。初始配置为 fixed 切分（片段可能残缺），调用 `POST /v1/evolve` 通过检索与确定性质量代理门禁后切到 recursive；重启服务会重置为 fixed，但实验历史仍保留。默认使用确定性演示模型；设置本地环境变量 `DEEPSEEK_API_KEY` 后，Executor 使用 DeepSeek 官方 Chat Completions API 的 `deepseek-flash`（可用 `DEEPSEEK_MODEL` 覆盖），关闭 thinking 并限制 1200 tokens；演示 Planner 保持单任务规则，Verifier 使用确定性非空输出规则（并不验证答案事实正确性）。Key 仅由 Go 服务读取，请勿写入仓库或浏览器。DeepSeek 是生成模型，检索仍使用 HashEmbedder。Trace 在响应前写入进程内存；如需跨进程保留，可执行 `docker compose up -d redis`，再设置 `AGENTLOOM_REDIS_ADDR=127.0.0.1:16379` 启动服务。后台队列异步写 Redis，请求不等待持久化；队列满或写入失败可能丢失跨进程记录，关停时会排空已接收事件。Redis 启动检查失败会报错。当前仍未接入真实 LLM Judge、Trace 驱动定时批评测与自动回滚；Kafka、etcd、Milvus 仍未落地。
+演示链路经过本地网关、Planner、Executor 的 RAG Tool 和 Verifier。服务从公开的 README 和架构文档建立检索索引；Trace 的 `retrievals` 记录实际返回给 Executor 的片段和来源。初始配置为 fixed 切分（片段可能残缺），调用 `POST /v1/evolve` 通过检索与确定性质量代理门禁后切到 recursive；重启服务会重置为 fixed，但实验历史仍保留。默认使用确定性演示模型；设置本地环境变量 `DEEPSEEK_API_KEY` 后，Executor 使用 DeepSeek 官方 Chat Completions API 的 `deepseek-flash`（可用 `DEEPSEEK_MODEL` 覆盖），关闭 thinking 并限制 1200 tokens；演示 Planner 保持单任务规则，Verifier 使用确定性非空输出规则（并不验证答案事实正确性）。Key 仅由 Go 服务读取，请勿写入仓库或浏览器。DeepSeek 是生成模型，检索仍使用 HashEmbedder。Trace 在响应前写入进程内存；如需跨进程保留，可执行 `docker compose up -d redis`，再设置 `AGENTLOOM_REDIS_ADDR=127.0.0.1:16379` 启动服务。后台队列异步写 Redis，请求不等待持久化；队列满或写入失败可能丢失跨进程记录，关停时会排空已接收事件。Redis 启动检查失败会报错。当前仍未接入真实 LLM Judge、Trace 驱动定时批评测与自动回滚。Kafka 是可选组件，启动和本地演示见 `docs/09-kafka-trace.md`；etcd、Milvus 仍未接入。
 
 环境：
 - Go 1.22+
-- 运行已构建工作台仅需 Go 1.22+；修改前端需 Node.js/npm。真实模型可选接入，外部基础设施仍在路线图中。
+- 运行已构建工作台仅需 Go 1.22+；修改前端需 Node.js/npm。真实模型可选接入。Kafka 仅在设置 broker 时需要；etcd 与 Milvus 仍在路线图中。
 
 ## 仓库结构
 

@@ -1,6 +1,6 @@
 # 01 · 架构详解
 
-> 本文描述目标架构；当前可运行范围以 README 状态表和 `internal/app` 的本地演示链路为准。Redis 可选用于演示 Trace 持久化；Kafka、Milvus、etcd 与自动优化发布尚未接入主请求链路。
+> 本文描述目标架构；当前可运行范围以 README 状态表和 `internal/app` 的本地演示链路为准。Redis 可选用于演示 Trace 持久化。设置 `AGENTLOOM_KAFKA_BROKERS` 后，Trace 写入走可选 Kafka 管道（见 `docs/09-kafka-trace.md`）；未设置时仍走内存队列。Milvus、etcd 与自动优化发布尚未接入主请求链路。
 
 > 配合 [`architecture.svg`](./architecture.svg) 阅读。本文回答"每一层为什么存在、它们怎么咬合"。
 

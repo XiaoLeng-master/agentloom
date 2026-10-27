@@ -1,4 +1,4 @@
-.PHONY: run bench eval test verify fmt vet tidy docker-up
+.PHONY: run bench eval test verify fmt vet tidy docker-up kafka-demo
 
 GO ?= go
 
@@ -22,5 +22,8 @@ vet:        ## 静态检查
 tidy:       ## 整理依赖
 	$(GO) mod tidy
 
-docker-up:  ## 起依赖（etcd/redis/milvus/kafka）
+docker-up:  ## 起 Redis。Kafka 在 profile kafka，见 make kafka-demo
 	docker compose up -d
+
+kafka-demo: ## 本机起 Kafka 并让 agentd 消费一波 Trace
+	bash scripts/kafka-demo.sh
