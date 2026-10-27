@@ -312,8 +312,9 @@ func TestSecondLoopMeasuresPromotedPolicy(t *testing.T) {
 }
 
 func TestClosedLoopPublic98(t *testing.T) {
-	chdirRepoRoot(t)
-	cases, docs, hash, err := LoadPublicCorpus(PublicDatasetPath)
+	snap := snapshotPath(t)
+	chdirAwayFromRepo(t)
+	cases, docs, hash, err := LoadFrozenCorpus(snap)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -330,7 +331,7 @@ func TestClosedLoopPublic98(t *testing.T) {
 		}
 		ids[c.ID] = true
 	}
-	_, _, hashAgain, err := LoadPublicCorpus(PublicDatasetPath)
+	_, _, hashAgain, err := LoadFrozenCorpus(snap)
 	if err != nil || hashAgain != hash || hash == "" {
 		t.Fatalf("hash=%s again=%s err=%v", hash, hashAgain, err)
 	}
@@ -351,15 +352,15 @@ func TestClosedLoopPublic98(t *testing.T) {
 	if report.Cases != PublicDatasetSize || len(report.Baseline.Results) != PublicDatasetSize {
 		t.Fatalf("report cases=%d results=%d", report.Cases, len(report.Baseline.Results))
 	}
-	if hash != "dcab7950d3d50439aa46f9a7ec06045bd3087263ece7f429382282815ed825fb" {
+	if hash != "1d29ca4e857a3ccda71f50b4f14fd79e55335073de108b98208c4826817d6cae" {
 		t.Fatalf("public corpus hash changed: %s", hash)
 	}
 	if report.Baseline.Metrics.QualityMode != "deterministic_proxy" {
 		t.Fatalf("quality mode=%s", report.Baseline.Metrics.QualityMode)
 	}
-	near(t, report.Baseline.Metrics.HitRate, 0.21428571428571427)
-	near(t, report.Baseline.Metrics.Quality, 0.4401517048174021)
-	if report.Baseline.Metrics.FailureCount != 98 || report.Baseline.Metrics.GroundingFailures != 77 {
+	near(t, report.Baseline.Metrics.HitRate, 0.20408163265306123)
+	near(t, report.Baseline.Metrics.Quality, 0.43941985466042344)
+	if report.Baseline.Metrics.FailureCount != 98 || report.Baseline.Metrics.GroundingFailures != 78 {
 		t.Fatalf("baseline failures=%d grounding=%d", report.Baseline.Metrics.FailureCount, report.Baseline.Metrics.GroundingFailures)
 	}
 	layers := map[string]int{}
@@ -374,7 +375,7 @@ func TestClosedLoopPublic98(t *testing.T) {
 	if layers[LayerRetrieval] != 98 || layers[LayerPrompt] != 0 || layers[LayerTool] != 0 {
 		t.Fatalf("layers=%v", layers)
 	}
-	if causes[CauseRetrievalMiss] != 77 || causes[CauseRetrievalChunkMiss] != 21 {
+	if causes[CauseRetrievalMiss] != 78 || causes[CauseRetrievalChunkMiss] != 20 {
 		t.Fatalf("causes=%v", causes)
 	}
 	if len(report.Candidates) < 2 {
@@ -406,12 +407,12 @@ func TestClosedLoopPublic98(t *testing.T) {
 		switch candidate.Task.ID {
 		case "retrieval-topk":
 			topk = candidate
-			if !candidate.Gate.Passed || !candidate.PredictionMatched || candidate.Metrics.FailureCount != 97 {
+			if !candidate.Gate.Passed || !candidate.PredictionMatched || candidate.Metrics.FailureCount != 98 {
 				t.Fatalf("topk=%+v gate=%+v", candidate.Metrics, candidate.Gate)
 			}
-			near(t, candidate.Metrics.HitRate, 0.32653061224489793)
+			near(t, candidate.Metrics.HitRate, 0.336734693877551)
 			near(t, candidate.Metrics.Quality, report.Baseline.Metrics.Quality)
-			near(t, candidate.ActualDelta, 0.11224489795918366)
+			near(t, candidate.ActualDelta, 0.13265306122448978)
 		case "retrieval-recursive":
 			if candidate.Gate.Passed || !candidate.PredictionMatched {
 				t.Fatalf("recursive gate=%+v", candidate.Gate)
@@ -507,6 +508,33 @@ func TestClosedLoopPublic98(t *testing.T) {
 	if !strings.Contains(md, "98") || !strings.Contains(md, "门禁") {
 		t.Fatalf("markdown missing summary:\n%s", clipText(md, 400))
 	}
+}
+
+func snapshotPath(t *testing.T) string {
+	t.Helper()
+	return filepath.Join(repoRoot(t), PublicSnapshotPath)
+}
+
+// chdirAwayFromRepo leaves a fake README in the working directory. The locked
+// test must still read the snapshot rather than this file.
+func chdirAwayFromRepo(t *testing.T) {
+	t.Helper()
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmp := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmp, "README.md"), []byte("this live readme must not enter the locked corpus"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(tmp); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(wd); err != nil {
+			t.Errorf("restore wd: %v", err)
+		}
+	})
 }
 
 func near(t *testing.T, got, want float64) {
