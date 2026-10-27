@@ -86,14 +86,14 @@ go test -race ./internal/eval/
 # 详见 docs/roadmap.md
 ```
 
-2026-10-27T09:02:11Z（UTC）执行 `go run ./cmd/bench`（Go 1.22.2，98 条，HashEmbedder，K=3，无付费 API）。这组数字写在提交 `f4c58c09d783ce81f230da1356eebbfa62c93d6c`（父提交 `933653f`），README 里的同名表与该次输出逐格相同。确定性代理分数是词法 GEval 均值（0–1）。真实回答未评。`docs/05` 不在评估集的 sourceDoc 里，补上提交哈希不会改表。再改 README 或 `docs/03-benchmark.md` 后必须重跑，不能把下表当成固定目标。
+2026-10-27 17:19（北京时间）在 README 补写真实 DeepSeek 端到端说明后重新执行 `go run ./cmd/bench`（本机 Go 1.27.3，98 条，HashEmbedder，K=3，无付费 API；没有调用 DeepSeek）。README 在评估集里，这次改动让 fixed 从 19.4% 变为 18.4%、MRR 和代理分数也有变化；下表与 README 同名表逐格相同，随新增 `docs/e2e-deepseek-2026-10-27.md` 的同一次提交写入。上一版数字写在提交 `f4c58c09d783ce81f230da1356eebbfa62c93d6c`。确定性代理分数是词法 GEval 均值（0–1）。真实回答未评。`docs/05` 不在评估集的 sourceDoc 里。再改 README 或 `docs/03-benchmark.md` 后必须重跑，不能把下表当成固定目标。
 
 | 切分策略 | 来源命中 HitRate@3 | MRR@3 | 确定性代理分数 | 通过率 | 引用失败 |
 |---|---|---|---|---|---|
-| fixed | 19.4% | 13.9% | 0.4427 | 1.0% | 79 |
+| fixed | 18.4% | 12.6% | 0.4451 | 1.0% | 80 |
 | recursive | 33.7% | 24.7% | 0.4380 | 0.0% | 65 |
-| semantic | 15.3% | 11.7% | 0.4405 | 1.0% | 83 |
-| parent-child | 19.4% | 11.6% | 0.4380 | 0.0% | 79 |
+| semantic | 15.3% | 11.2% | 0.4405 | 1.0% | 83 |
+| parent-child | 19.4% | 11.4% | 0.4402 | 0.0% | 79 |
 
 ## 设计取舍：为什么规则优先、LLM-as-Judge 兜底
 

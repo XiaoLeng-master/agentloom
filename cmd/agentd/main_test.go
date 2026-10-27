@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -9,6 +11,7 @@ import (
 
 	"github.com/XiaoLeng-master/agentloom/internal/app"
 	"github.com/XiaoLeng-master/agentloom/internal/config"
+	"github.com/XiaoLeng-master/agentloom/internal/core"
 )
 
 func TestPublicDocsBecomeRetrievalEvidence(t *testing.T) {
@@ -54,5 +57,28 @@ func TestPublicDocsBecomeRetrievalEvidence(t *testing.T) {
 	}
 	if !foundRoles {
 		t.Fatalf("role responsibilities missing from evidence: %+v", trace.Retrievals)
+	}
+}
+
+type countingLLM struct{ calls *int }
+
+func (c countingLLM) Complete(context.Context, []core.Message) (core.Message, error) {
+	*c.calls++
+	return core.Message{Role: core.RoleAssistant, Content: "ok"}, nil
+}
+
+func TestCallBudgetRefusesBeyondLimit(t *testing.T) {
+	calls := 0
+	llm := budgetedLLM{inner: countingLLM{&calls}, budget: &callBudget{limit: 2}}
+	for i := 0; i < 2; i++ {
+		if _, err := llm.Complete(context.Background(), nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := llm.Complete(context.Background(), nil); !errors.Is(err, errCallBudget) {
+		t.Fatalf("third call err = %v", err)
+	}
+	if calls != 2 {
+		t.Fatalf("inner calls = %d, want 2", calls)
 	}
 }

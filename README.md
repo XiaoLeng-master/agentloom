@@ -48,7 +48,7 @@ agentloom 把这三件事做在同一套平台里，并且**让每一环都咬�
 | **网关治理链** | Filter Chain：本地演示 token、关键词注入信号、单机租户限流 | 🚧 |
 | **插件化运行时** | IoC 生命周期：planner/memory/tool/evaluator 可热插拔，mount/reload/dispose 不重置 agent 状态 | ✅ |
 | **后端底座** | 单进程内的可选 Redis Trace、内存队列、按月分组及内存缓存；Kafka、etcd、Milvus 与 DLQ 尚未接入。没有改成多实例或分布式 | 🚧 |
-| **真实 DeepSeek** | Executor 在设置 `DEEPSEEK_API_KEY` 后可调用官方接口，空模型兜底为 `deepseek-flash`。截至本次提交没有用真实 DeepSeek 跑过端到端；是否补跑由作者决定，调用会产生 API 费用 | 🚧 |
+| **真实 DeepSeek** | Executor 在设置 `DEEPSEEK_API_KEY` 后可调用官方接口，空模型兜底为 `deepseek-flash`。2026-10-27 在本地公开模式用真实 `deepseek-flash` 跑过一次小规模端到端：4 次 Chat、8 次模型调用，见 `docs/e2e-deepseek-2026-10-27.md`；没有做规模化评测 | 🚧 |
 
 > ✅ = 已实现且有测试 / 🚧 = 组件就位，运行时串联推进中 / 📋 = 设计完成待实现
 
@@ -68,14 +68,14 @@ curl localhost:8080/health   # {"status":"ok","agents":["kb-agent"]}
 
 `make run` 后打开 `http://localhost:8080/`，可在本地工作台使用 Chat、Trace、Benchmark 三个页面。Benchmark 首次通过只读 `GET /v1/bench` 展示基线，点击复测才调用会更新本地配置的 `POST /v1/evolve`。前端由同一个 Go 服务提供；在 `web/` 执行 `npm ci && npm run build` 可重新构建嵌入的静态资源（需 Node.js/npm）。仓库已包含构建产物，普通运行无需安装前端依赖。浏览器不接触 `DEEPSEEK_API_KEY`。
 
-`cmd/evolve` 会在相同数据集和语料上计算两次检索命中率，并输出数据哈希、逐条命中、失败来源归因、预测区间、实际变化和本地配置版本。服务运行时可用本地演示 token 调用 `POST /v1/evolve`；每次实验写入本地 `.agentloom/evolutions/`，通过 `GET /v1/evolutions` 或 `GET /v1/evolutions/{id}` 读回。门禁通过后，后续 `/v1/chat` 请求的 Trace 会显示新的配置版本和切分策略。该接口是手动触发的检索实验，当前没有请求 Trace 驱动的定时评测。已完成的是来源命中，以及确定性词法代理已评（接口和 Benchmark 展示代理质量、通过率和引用失败）。真实回答未评；安全性与自动回滚也尚未完成。下表是本机实测，不是模型回答分数。命令 `go run ./cmd/bench`，Go 1.22.2，98 条，HashEmbedder，K=3，无付费 API。代理分数是首条检索片段相对标注的词法 GEval 均值（0–1）。真实回答未评。README 和 `docs/03-benchmark.md` 在评估集里，改动它们会改变下表；时间见 `docs/05-evaluation-method.md`。
+`cmd/evolve` 会在相同数据集和语料上计算两次检索命中率，并输出数据哈希、逐条命中、失败来源归因、预测区间、实际变化和本地配置版本。服务运行时可用本地演示 token 调用 `POST /v1/evolve`；每次实验写入本地 `.agentloom/evolutions/`，通过 `GET /v1/evolutions` 或 `GET /v1/evolutions/{id}` 读回。门禁通过后，后续 `/v1/chat` 请求的 Trace 会显示新的配置版本和切分策略。该接口是手动触发的检索实验，当前没有请求 Trace 驱动的定时评测。已完成的是来源命中，以及确定性词法代理已评（接口和 Benchmark 展示代理质量、通过率和引用失败）。真实回答未评；安全性与自动回滚也尚未完成。下表是本机实测，不是模型回答分数。命令 `go run ./cmd/bench`，Go 1.27.3，98 条，HashEmbedder，K=3，无付费 API。代理分数是首条检索片段相对标注的词法 GEval 均值（0–1）。真实回答未评。README 和 `docs/03-benchmark.md` 在评估集里，改动它们会改变下表；时间见 `docs/05-evaluation-method.md`。
 
 | 切分策略 | 来源命中 HitRate@3 | MRR@3 | 确定性代理分数 | 通过率 | 引用失败 |
 |---|---|---|---|---|---|
-| fixed | 19.4% | 13.9% | 0.4427 | 1.0% | 79 |
+| fixed | 18.4% | 12.6% | 0.4451 | 1.0% | 80 |
 | recursive | 33.7% | 24.7% | 0.4380 | 0.0% | 65 |
-| semantic | 15.3% | 11.7% | 0.4405 | 1.0% | 83 |
-| parent-child | 19.4% | 11.6% | 0.4380 | 0.0% | 79 |
+| semantic | 15.3% | 11.2% | 0.4405 | 1.0% | 83 |
+| parent-child | 19.4% | 11.4% | 0.4402 | 0.0% | 79 |
 
 本地端到端演示（确定性演示模型、内存文档检索；不是在线 LLM 或生产知识库）：
 
@@ -87,7 +87,7 @@ curl -H 'Authorization: Bearer local-demo' -H 'Content-Type: application/json' \
 curl -H 'Authorization: Bearer local-demo' localhost:8080/v1/traces/<trace_id>
 ```
 
-演示链路经过本地网关、Planner、Executor 的 RAG Tool 和 Verifier。服务从公开的 README 和架构文档建立检索索引；Trace 的 `retrievals` 记录实际返回给 Executor 的片段和来源。初始配置为 fixed 切分（片段可能残缺），调用 `POST /v1/evolve` 通过来源命中与确定性词法代理门禁后切到 recursive（真实回答未评）；重启服务会重置为 fixed，但实验历史仍保留。默认使用确定性演示模型；设置本地环境变量 `DEEPSEEK_API_KEY` 后，Executor 使用 DeepSeek 官方 Chat Completions API 的 `deepseek-flash`（可用 `DEEPSEEK_MODEL` 覆盖），关闭 thinking 并限制 1200 tokens；演示 Planner 保持单任务规则，Verifier 使用确定性非空输出规则（并不验证答案事实正确性）。Key 仅由 Go 服务读取，请勿写入仓库或浏览器。截至本次提交没有用真实 DeepSeek 跑过 Chat 或 evolve；是否补跑由作者决定，调用官方 API 会产生费用。DeepSeek 是生成模型，检索仍使用 HashEmbedder。Trace 在响应前写入进程内存；如需跨进程保留，可执行 `docker compose up -d redis`，再设置 `AGENTLOOM_REDIS_ADDR=127.0.0.1:16379` 启动服务。后台队列异步写 Redis，请求不等待持久化；队列满或写入失败可能丢失跨进程记录，关停时会排空已接收事件。Redis 启动检查失败会报错。当前仍未接入真实 LLM Judge、Trace 驱动定时批评测与自动回滚；Kafka、etcd、Milvus 仍未落地。
+演示链路经过本地网关、Planner、Executor 的 RAG Tool 和 Verifier。服务从公开的 README 和架构文档建立检索索引；Trace 的 `retrievals` 记录实际返回给 Executor 的片段和来源。初始配置为 fixed 切分（片段可能残缺），调用 `POST /v1/evolve` 通过来源命中与确定性词法代理门禁后切到 recursive（真实回答未评）；重启服务会重置为 fixed，但实验历史仍保留。默认使用确定性演示模型；设置本地环境变量 `DEEPSEEK_API_KEY` 后，Executor 使用 DeepSeek 官方 Chat Completions API 的 `deepseek-flash`（可用 `DEEPSEEK_MODEL` 覆盖），关闭 thinking 并限制 1200 tokens；演示 Planner 保持单任务规则，Verifier 使用确定性非空输出规则（并不验证答案事实正确性）。Key 仅由 Go 服务读取，请勿写入仓库或浏览器。2026-10-27 用真实 `deepseek-flash` 在本地公开模式跑过一次小规模 Chat 端到端（4 个请求、8 次模型调用，结果与局限见 `docs/e2e-deepseek-2026-10-27.md`）；evolve 不调用模型，真实回答仍未评，调用官方 API 会产生费用。设置 `AGENTLOOM_DEEPSEEK_MAX_CALLS` 可限制单进程的模型调用次数，日志逐次记录延迟和 token 用量（不含 Key）。DeepSeek 是生成模型，检索仍使用 HashEmbedder。Trace 在响应前写入进程内存；如需跨进程保留，可执行 `docker compose up -d redis`，再设置 `AGENTLOOM_REDIS_ADDR=127.0.0.1:16379` 启动服务。后台队列异步写 Redis，请求不等待持久化；队列满或写入失败可能丢失跨进程记录，关停时会排空已接收事件。Redis 启动检查失败会报错。当前仍未接入真实 LLM Judge、Trace 驱动定时批评测与自动回滚；Kafka、etcd、Milvus 仍未落地。
 
 环境：
 - Go 1.22+

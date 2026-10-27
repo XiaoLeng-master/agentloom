@@ -29,7 +29,7 @@ make run
 ## 仍未声称完成的能力
 
 - 当前分开计三项：来源命中、确定性词法代理已评（检索片段与标注的词法重合、引用失败和通过率）、真实回答未评。尚未接入真实 LLM Judge。四种切分的实测表见 README 与 `docs/05-evaluation-method.md`。
-- 没有用真实 DeepSeek 跑过 Chat 或 evolve 的端到端请求。是否补跑由作者决定，调用官方 API 会产生费用。测试和 `go run ./cmd/bench` 不读取 `DEEPSEEK_API_KEY`。
+- 2026-10-27 在本地公开模式用真实 `deepseek-flash` 跑过一次小规模 Chat 端到端：4 个请求、8 次模型调用，记录见 `docs/e2e-deepseek-2026-10-27.md`。这不是规模化评测，真实回答质量仍未评；evolve 不调用模型。调用官方 API 会产生费用。测试和 `go run ./cmd/bench` 不读取 `DEEPSEEK_API_KEY`。
 - 可运行的 `agentd` 是单进程。热更新、限流和内存队列都在这个进程里，没有改成多实例或分布式。
 - Trace 已可查询并异步写入内存或 Redis，但尚未实现 Trace 触发的自动批评测、灰度发布和自动回滚。
 - Kafka、etcd、Milvus、用户系统、多租户和生产级密钥管理不属于当前公开演示的已交付范围。
