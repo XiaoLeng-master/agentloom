@@ -176,9 +176,17 @@ func (a *App) bench(w http.ResponseWriter, r *http.Request) {
 	recursive := rag.RecursiveSplitter{Size: 60, Overlap: 10}
 	before := evolution.AttachHarness(evolution.RunRetrieval(cases, docs, hash, fixed), cases, docs, fixed)
 	after := evolution.AttachHarness(evolution.RunRetrieval(cases, docs, hash, recursive), cases, docs, recursive)
+	semantic := evolution.AttachHarness(evolution.RunRetrieval(cases, docs, hash, rag.SemanticSplitter{}), cases, docs, rag.SemanticSplitter{})
+	parent := evolution.AttachHarness(evolution.RunRetrieval(cases, docs, hash, rag.ParentChildSplitter{ChildSize: 20, ParentSize: 80}), cases, docs, rag.ParentChildSplitter{ChildSize: 20, ParentSize: 80})
 	ev := evolution.DescribeEvaluation(before, after)
 	write(w, 200, map[string]any{"before": before, "after": after, "failures": evolution.DiagnoseRetrieval(before, after),
-		"actual_delta": after.HitRate - before.HitRate, "answer_quality": ev.LexicalProxy, "evaluation": ev})
+		"actual_delta": after.HitRate - before.HitRate, "answer_quality": ev.LexicalProxy, "evaluation": ev,
+		"strategies": []evolution.RetrievalRun{withoutResults(before), withoutResults(after), withoutResults(semantic), withoutResults(parent)}})
+}
+
+func withoutResults(run evolution.RetrievalRun) evolution.RetrievalRun {
+	run.Results = nil
+	return run
 }
 
 func (a *App) evolve(w http.ResponseWriter, r *http.Request) {

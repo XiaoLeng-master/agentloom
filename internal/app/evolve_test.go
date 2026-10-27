@@ -41,6 +41,10 @@ func TestExperimentChangesSubsequentTraceVersion(t *testing.T) {
 		`"real_answer":"真实回答未评"`,
 		`"quality_mode":"deterministic_proxy"`,
 		`"before_quality":`,
+		`"strategy":"fixed"`,
+		`"strategy":"recursive"`,
+		`"strategy":"semantic"`,
+		`"strategy":"parent-child"`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("bench missing %s: %s", want, body)

@@ -86,14 +86,14 @@ go test -race ./internal/eval/
 # 详见 docs/roadmap.md
 ```
 
-输出示例（`make bench`）：
+2026-10-27T09:02:11Z（UTC）执行 `go run ./cmd/bench`（Go 1.22.2，98 条，HashEmbedder，K=3，无付费 API）。测量时父提交是 `933653f`，README 里的同名表与这次输出逐格相同。确定性代理分数是词法 GEval 均值（0–1）。真实回答未评。`docs/05` 不在评估集的 sourceDoc 里。再改 README 或 `docs/03-benchmark.md` 后必须重跑，不能把下表当成固定目标。
 
-```
-| 切分策略 | HitRate@K | MRR@K |
-|---|---|---|
-| fixed | 以当前 `make bench` 输出为准 | 同左 |
-| recursive | 以当前 `make bench` 输出为准 | 同左 |
-```
+| 切分策略 | 来源命中 HitRate@3 | MRR@3 | 确定性代理分数 | 通过率 | 引用失败 |
+|---|---|---|---|---|---|
+| fixed | 19.4% | 13.9% | 0.4427 | 1.0% | 79 |
+| recursive | 33.7% | 24.7% | 0.4380 | 0.0% | 65 |
+| semantic | 15.3% | 11.7% | 0.4405 | 1.0% | 83 |
+| parent-child | 19.4% | 11.6% | 0.4380 | 0.0% | 79 |
 
 ## 设计取舍：为什么规则优先、LLM-as-Judge 兜底
 
