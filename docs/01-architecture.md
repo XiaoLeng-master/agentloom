@@ -1,6 +1,6 @@
 # 01 · 架构详解
 
-> 本文描述目标架构；当前可运行范围以 README 状态表和 `internal/app` 的本地演示链路为准。Redis 可选用于演示 Trace 持久化；Kafka、Milvus、etcd 与自动优化发布尚未接入主请求链路。
+> 本文描述目标架构；当前可运行范围以 README 状态表和 `internal/app` 的本地演示链路为准。Redis 可选用于演示 Trace 持久化。设置 `AGENTLOOM_ETCD_ENDPOINTS` 后，etcd Watch 到的稳定配置走 Reload/Drain，灰度文档走现有的比例分流和回滚；未设置时使用内存配置。Kafka 与 Milvus 尚未接入。
 
 > 配合 [`architecture.svg`](./architecture.svg) 阅读。本文回答"每一层为什么存在、它们怎么咬合"。
 

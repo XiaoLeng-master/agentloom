@@ -1,0 +1,31 @@
+# Optional local infrastructure. etcd is one service so a later change can add
+# Kafka beside it without mixing it into the Redis compose file at the repo root.
+services:
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.16
+    environment:
+      ETCDCTL_API: "3"
+    command:
+      - --name=agentloom
+      - --data-dir=/etcd-data
+      - --listen-client-urls=http://0.0.0.0:2379
+      - --advertise-client-urls=http://127.0.0.1:2379
+      - --listen-peer-urls=http://0.0.0.0:2380
+      - --initial-advertise-peer-urls=http://127.0.0.1:2380
+      - --initial-cluster=agentloom=http://127.0.0.1:2380
+      - --initial-cluster-state=new
+      - --initial-cluster-token=agentloom
+    ports:
+      - "127.0.0.1:2379:2379"
+    volumes:
+      - agentloom-etcd:/etcd-data
+    healthcheck:
+      test: ["CMD", "etcdctl", "--endpoints=http://127.0.0.1:2379", "endpoint", "health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    restart: unless-stopped
+
+volumes:
+  agentloom-etcd:

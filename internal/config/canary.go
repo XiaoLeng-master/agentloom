@@ -83,6 +83,18 @@ func (m *Manager) StartCanary(name string, candidate Config, percent int) (int, 
 	return candidate.Version, nil
 }
 
+// CanaryConfig returns a copy of the candidate and its percent.
+// The second result is false when the agent has no canary.
+func (m *Manager) CanaryConfig(name string) (Config, int, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	slot, ok := m.canaries[name]
+	if !ok {
+		return Config{}, 0, false
+	}
+	return slot.entry.cfg, slot.percent, true
+}
+
 // CanaryPercent reports the current canary share. The second result is false
 // when the agent has no canary.
 func (m *Manager) CanaryPercent(name string) (int, bool) {

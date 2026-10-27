@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/XiaoLeng-master/agentloom/internal/config"
 	"github.com/XiaoLeng-master/agentloom/internal/core"
 	"github.com/XiaoLeng-master/agentloom/internal/rag"
 )
@@ -91,6 +92,45 @@ func TestPublicModeAllowsChatButProtectsEvolution(t *testing.T) {
 	handler.ServeHTTP(rec, req)
 	if rec.Code != 403 {
 		t.Fatalf("evolve status=%d", rec.Code)
+	}
+}
+
+func TestRuntimeConfigShowsCanarySplit(t *testing.T) {
+	mgr := config.NewManager()
+	mgr.Register("kb-agent", config.Config{Name: "kb-agent", SystemPrompt: "etcd-stable", ChunkStrategy: "recursive", PromptMode: "echo", TopK: 5})
+	if _, err := mgr.StartCanary("kb-agent", config.Config{Name: "kb-agent", SystemPrompt: "etcd-canary", ChunkStrategy: "fixed", PromptMode: "echo", TopK: 3}, 10); err != nil {
+		t.Fatal(err)
+	}
+	handler := New(nil).WithConfigManager(mgr).Handler()
+	canaryTenant, ok := config.TenantForBucket(0)
+	if !ok {
+		t.Fatal("missing canary tenant")
+	}
+	stableTenant, ok := config.TenantForBucket(99)
+	if !ok {
+		t.Fatal("missing stable tenant")
+	}
+	read := func(tenant string) map[string]any {
+		req := httptest.NewRequest(http.MethodGet, "/v1/config", nil)
+		req.Header.Set("X-Tenant", tenant)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != 200 {
+			t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+		}
+		var body map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		return body
+	}
+	inside := read(canaryTenant)
+	outside := read(stableTenant)
+	if inside["system_prompt"] != "etcd-canary" || inside["version"] != float64(2) || inside["in_canary"] != true || inside["canary_percent"] != float64(10) {
+		t.Fatalf("canary view=%v", inside)
+	}
+	if outside["system_prompt"] != "etcd-stable" || outside["version"] != float64(1) || outside["in_canary"] != false {
+		t.Fatalf("stable view=%v", outside)
 	}
 }
 
