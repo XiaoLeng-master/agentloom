@@ -55,9 +55,12 @@ func TestExperimentChangesSubsequentTraceVersion(t *testing.T) {
 		t.Fatalf("bench mutated config: %+v", active.Config())
 	}
 	active.Release()
-	chat := func() Trace {
+	chat := func(tenant string) Trace {
 		req := httptest.NewRequest(http.MethodPost, "/v1/chat", strings.NewReader(`{"message":"planner"}`))
 		req.Header.Set("Authorization", "Bearer local-demo")
+		if tenant != "" {
+			req.Header.Set("X-Tenant", tenant)
+		}
 		rec := httptest.NewRecorder()
 		a.Handler().ServeHTTP(rec, req)
 		if rec.Code != 200 {
@@ -74,7 +77,7 @@ func TestExperimentChangesSubsequentTraceVersion(t *testing.T) {
 		a.mu.RUnlock()
 		return trace
 	}
-	before := chat()
+	before := chat("local")
 	req := httptest.NewRequest(http.MethodPost, "/v1/evolve", nil)
 	req.Header.Set("Authorization", "Bearer local-demo")
 	rec := httptest.NewRecorder()
@@ -105,6 +108,8 @@ func TestExperimentChangesSubsequentTraceVersion(t *testing.T) {
 			PromptMode    string `json:"prompt_mode"`
 			TopK          int    `json:"top_k"`
 			Version       int    `json:"version"`
+			Percent       int    `json:"percent"`
+			Stage         string `json:"stage"`
 		} `json:"promoted"`
 		CauseCounts []struct {
 			Layer string `json:"layer"`
@@ -144,18 +149,44 @@ func TestExperimentChangesSubsequentTraceVersion(t *testing.T) {
 	if readback.Code != 200 || !strings.Contains(readback.Body.String(), experiment.ID) || !strings.Contains(readback.Body.String(), `"tasks"`) {
 		t.Fatalf("readback %d: %s", readback.Code, readback.Body.String())
 	}
-	after := chat()
 	if before.ConfigVersion != 1 || before.ChunkStrategy != "fixed" {
 		t.Fatalf("before=%+v", before)
 	}
+	stableTenant, ok := config.TenantForBucket(99)
+	if !ok {
+		t.Fatal("missing stable tenant")
+	}
+	canaryTenant, ok := config.TenantForBucket(0)
+	if !ok {
+		t.Fatal("missing canary tenant")
+	}
+	stableAfter := chat(stableTenant)
+	canaryAfter := chat(canaryTenant)
 	if experiment.Promoted == nil {
-		if after.ConfigVersion != 1 || after.ChunkStrategy != "fixed" {
-			t.Fatalf("gate did not promote but config changed: %+v", after)
+		if stableAfter.ConfigVersion != 1 || canaryAfter.ConfigVersion != 1 || stableAfter.ChunkStrategy != "fixed" {
+			t.Fatalf("gate did not start a canary but config changed: stable=%+v canary=%+v", stableAfter, canaryAfter)
 		}
 		return
 	}
-	if after.ConfigVersion != experiment.Promoted.Version || after.ChunkStrategy != experiment.Promoted.ChunkStrategy || after.PromptMode != experiment.Promoted.PromptMode || after.TopK != experiment.Promoted.TopK {
-		t.Fatalf("promoted=%+v after=%+v", experiment.Promoted, after)
+	if experiment.Promoted.Stage != "canary" || experiment.Promoted.Percent != 10 {
+		t.Fatalf("promoted=%+v", experiment.Promoted)
+	}
+	if !strings.Contains(rec.Body.String(), `"kind":"canary"`) {
+		t.Fatalf("evolve response missing canary event: %s", rec.Body.String())
+	}
+	if stableAfter.ConfigVersion != 1 || stableAfter.ChunkStrategy != "fixed" {
+		t.Fatalf("stable tenant left the baseline: %+v", stableAfter)
+	}
+	if canaryAfter.ConfigVersion != experiment.Promoted.Version || canaryAfter.ChunkStrategy != experiment.Promoted.ChunkStrategy || canaryAfter.PromptMode != experiment.Promoted.PromptMode || canaryAfter.TopK != experiment.Promoted.TopK {
+		t.Fatalf("promoted=%+v canary=%+v", experiment.Promoted, canaryAfter)
+	}
+	plain, err := mgr.Acquire("kb-agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer plain.Release()
+	if plain.Config().Version != 1 {
+		t.Fatalf("stable acquire replaced: %+v", plain.Config())
 	}
 }
 

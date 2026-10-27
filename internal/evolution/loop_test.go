@@ -300,6 +300,15 @@ func TestSecondLoopMeasuresPromotedPolicy(t *testing.T) {
 		second.Promoted.TopK == first.Promoted.TopK {
 		t.Fatalf("same task promoted twice: %+v then %+v", first.Promoted, second.Promoted)
 	}
+	if first.Rollout != nil {
+		if second.Promoted != nil {
+			t.Fatalf("second loop started another canary: %+v", second.Promoted)
+		}
+		percent, ok := mgr.CanaryPercent("kb-agent")
+		if !ok || percent != first.Rollout.Percent {
+			t.Fatalf("canary percent=%d ok=%v event=%+v", percent, ok, first.Rollout)
+		}
+	}
 }
 
 func TestClosedLoopPublic98(t *testing.T) {
@@ -414,8 +423,11 @@ func TestClosedLoopPublic98(t *testing.T) {
 			}
 		}
 	}
-	if topk == nil || report.Promoted == nil || report.Promoted.TaskID != "retrieval-topk" || report.Promoted.Version != 2 || report.Promoted.TopK != 5 || report.Promoted.ChunkStrategy != "fixed" {
+	if topk == nil || report.Promoted == nil || report.Promoted.TaskID != "retrieval-topk" || report.Promoted.Version != 2 || report.Promoted.TopK != 5 || report.Promoted.ChunkStrategy != "fixed" || report.Promoted.PromptMode != PromptEcho || report.Promoted.Stage != "canary" || report.Promoted.Percent != 10 {
 		t.Fatalf("promoted=%+v", report.Promoted)
+	}
+	if report.Rollout == nil || report.Rollout.Kind != RolloutCanary || report.Rollout.Percent != 10 || report.Rollout.StableVersion != 1 || report.Rollout.CanaryVersion != 2 {
+		t.Fatalf("rollout=%+v", report.Rollout)
 	}
 	active, err := mgr.Acquire("kb-agent")
 	if err != nil {
@@ -423,17 +435,63 @@ func TestClosedLoopPublic98(t *testing.T) {
 	}
 	cfg := active.Config()
 	active.Release()
-	if cfg.Version != 2 || cfg.TopK != 5 || cfg.ChunkStrategy != "fixed" || cfg.PromptMode != PromptEcho {
-		t.Fatalf("active=%+v", cfg)
+	if cfg.Version != 1 || cfg.ChunkStrategy != "fixed" || cfg.TopK != 0 || cfg.PromptMode != "" {
+		t.Fatalf("stable acquire changed: %+v", cfg)
 	}
-	secondManager := config.NewManager()
-	secondManager.Register("kb-agent", cfg)
-	second, err := RunLoop(LoopOptions{
+	canaryTenant, ok := config.TenantForBucket(0)
+	if !ok {
+		t.Fatal("missing canary tenant")
+	}
+	stableTenant, ok := config.TenantForBucket(99)
+	if !ok {
+		t.Fatal("missing stable tenant")
+	}
+	canary, err := mgr.AcquireTenant("kb-agent", canaryTenant)
+	if err != nil {
+		t.Fatal(err)
+	}
+	canaryCfg := canary.Config()
+	canary.Release()
+	if canaryCfg.Version != 2 || canaryCfg.TopK != 5 || canaryCfg.ChunkStrategy != "fixed" || canaryCfg.PromptMode != PromptEcho {
+		t.Fatalf("canary=%+v", canaryCfg)
+	}
+	outside, err := mgr.AcquireTenant("kb-agent", stableTenant)
+	if err != nil {
+		t.Fatal(err)
+	}
+	outsideCfg := outside.Config()
+	outside.Release()
+	if outsideCfg.Version != 1 || outsideCfg.TopK != 0 {
+		t.Fatalf("stable tenant entered canary: %+v", outsideCfg)
+	}
+	again, err := RunLoop(LoopOptions{
 		DatasetPath: PublicDatasetPath,
 		Cases:       cases,
 		Docs:        docs,
 		DatasetHash: hash,
 		Baseline:    PolicyForConfig(cfg),
+		Manager:     mgr,
+		AgentName:   "kb-agent",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.Promoted != nil {
+		t.Fatalf("same manager started another canary: %+v", again.Promoted)
+	}
+	percent, ok := mgr.CanaryPercent("kb-agent")
+	if !ok || percent != 10 {
+		t.Fatalf("canary percent=%d ok=%v", percent, ok)
+	}
+	fresh := config.Config{Name: "kb-agent", SystemPrompt: "candidate", ChunkStrategy: "fixed", PromptMode: PromptEcho, TopK: 5}
+	secondManager := config.NewManager()
+	secondManager.Register("kb-agent", fresh)
+	second, err := RunLoop(LoopOptions{
+		DatasetPath: PublicDatasetPath,
+		Cases:       cases,
+		Docs:        docs,
+		DatasetHash: hash,
+		Baseline:    PolicyForConfig(fresh),
 		Manager:     secondManager,
 		AgentName:   "kb-agent",
 	})

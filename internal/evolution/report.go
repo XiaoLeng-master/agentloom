@@ -83,14 +83,17 @@ func (r LoopReport) Markdown() string {
 
 	fmt.Fprintf(&b, "## 门禁生效\n\n")
 	if r.Promoted == nil {
-		b.WriteString("没有候选替换本地配置。\n\n")
+		b.WriteString("没有候选进入灰度。\n\n")
 	} else {
-		fmt.Fprintf(&b, "- 生效候选：%s\n", r.Promoted.TaskID)
-		fmt.Fprintf(&b, "- 配置版本：%d\n", r.Promoted.Version)
+		fmt.Fprintf(&b, "- 灰度候选：%s\n", r.Promoted.TaskID)
+		fmt.Fprintf(&b, "- 候选版本：%d\n", r.Promoted.Version)
+		fmt.Fprintf(&b, "- 阶段：%s\n", emptyDash(r.Promoted.Stage))
+		fmt.Fprintf(&b, "- 流量：%d%%\n", r.Promoted.Percent)
 		fmt.Fprintf(&b, "- 切分策略：%s\n", r.Promoted.ChunkStrategy)
 		fmt.Fprintf(&b, "- Prompt 策略：%s\n", r.Promoted.PromptMode)
 		fmt.Fprintf(&b, "- 工具策略：%s\n", r.Promoted.ToolMode)
-		fmt.Fprintf(&b, "- TopK：%d\n\n", r.Promoted.TopK)
+		fmt.Fprintf(&b, "- TopK：%d\n", r.Promoted.TopK)
+		b.WriteString("这是按租户哈希分流的灰度，不是整进程替换。未命中灰度桶的请求仍使用稳定版本。\n\n")
 	}
 
 	fmt.Fprintf(&b, "## 边界\n\n")
