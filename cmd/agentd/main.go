@@ -8,12 +8,15 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
+	"sync"
 	"syscall"
 	"time"
 
@@ -35,6 +38,49 @@ func publicDocs(root string) ([]rag.Document, error) {
 		docs = append(docs, rag.Document{Source: path, Text: string(body)})
 	}
 	return docs, nil
+}
+
+// callBudget caps real model calls in one agentd process. Limit <= 0 means no cap.
+// It logs one line per attempt without request headers or the API key.
+type callBudget struct {
+	mu    sync.Mutex
+	limit int
+	used  int
+}
+
+var errCallBudget = errors.New("deepseek call budget exhausted")
+
+func (b *callBudget) take() (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.limit > 0 && b.used >= b.limit {
+		return b.used, errCallBudget
+	}
+	b.used++
+	return b.used, nil
+}
+
+type budgetedLLM struct {
+	inner  core.LLMClient
+	budget *callBudget
+}
+
+func (m budgetedLLM) Complete(ctx context.Context, msgs []core.Message) (core.Message, error) {
+	if _, err := m.budget.take(); err != nil {
+		log.Printf("deepseek call refused: %v (limit %d)", err, m.budget.limit)
+		return core.Message{}, err
+	}
+	return m.inner.Complete(ctx, msgs)
+}
+
+func logCall(budget *callBudget) func(core.CallStats) {
+	return func(s core.CallStats) {
+		budget.mu.Lock()
+		n := budget.used
+		budget.mu.Unlock()
+		log.Printf("deepseek call n=%d model=%s response_model=%s status=%d latency_ms=%d prompt_tokens=%d completion_tokens=%d total_tokens=%d err=%q",
+			n, s.Model, s.ResponseModel, s.Status, s.Latency.Milliseconds(), s.PromptTokens, s.CompletionTokens, s.TotalTokens, s.Err)
+	}
 }
 
 func main() {
@@ -63,14 +109,16 @@ func main() {
 		models = map[string]core.LLMClient{}
 		model := os.Getenv("DEEPSEEK_MODEL")
 		if model == "" {
-			model = "deepseek-flash"
+			model = core.DefaultModel
 		}
+		limit, _ := strconv.Atoi(os.Getenv("AGENTLOOM_DEEPSEEK_MAX_CALLS"))
+		budget := &callBudget{limit: limit}
 		for _, role := range []string{"executor"} {
-			client := core.DeepSeekClient{APIKey: key, Model: model, MaxTokens: 1200, NoThinking: true}
+			client := core.DeepSeekClient{APIKey: key, Model: model, MaxTokens: 1200, NoThinking: true, OnCall: logCall(budget)}
 			if role == "executor" {
 				client.Tools = []map[string]any{{"type": "function", "function": map[string]any{"name": "search_docs", "description": "Search indexed documentation", "parameters": map[string]any{"type": "object", "properties": map[string]any{"query": map[string]any{"type": "string"}}, "required": []string{"query"}}}}}
 			}
-			models[role] = client
+			models[role] = budgetedLLM{inner: client, budget: budget}
 		}
 	}
 	docs, err := publicDocs(".")

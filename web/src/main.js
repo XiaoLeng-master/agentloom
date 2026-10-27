@@ -19,10 +19,18 @@ createApp({
     const reply = ref(null)
     const trace = ref(null)
     const experiments = ref([])
+    const strategies = ref([])
     const selected = ref(null)
     const preview = ref(false)
     const accessToken = ref('')
     const hitPercent = value => `${((value || 0) * 100).toFixed(1)}%`
+    const proxyText = run => run && run.quality_mode ? hitPercent(run.quality) : '—'
+    const lexicalStatus = computed(() => {
+      const item = selected.value
+      if (item?.evaluation?.lexical_proxy) return item.evaluation.lexical_proxy
+      if (item?.before?.quality_mode || item?.after?.quality_mode) return '确定性词法代理已评'
+      return '确定性词法代理未运行'
+    })
     const resolved = computed(() => selected.value?.failures?.filter(f => f.resolved_by_candidate).length || 0)
 
     async function send() {
@@ -37,11 +45,13 @@ createApp({
       busy.value = true; error.value = ''
       try {
         experiments.value = await request('/v1/evolutions', {}, accessToken.value)
+        const bench = await request('/v1/bench', {}, accessToken.value)
+        strategies.value = bench.strategies || []
         if (experiments.value.length) {
           selected.value = experiments.value[0]
           preview.value = false
         } else {
-          selected.value = await request('/v1/bench', {}, accessToken.value)
+          selected.value = bench
           preview.value = true
         }
       } catch (e) { error.value = e.message } finally { busy.value = false }
@@ -58,7 +68,7 @@ createApp({
       tab.value = next; error.value = ''
       if (next === 'benchmark') loadExperiments()
     }
-    return { tab, message, busy, error, reply, trace, experiments, selected, preview, accessToken, resolved, hitPercent, send, runExperiment, switchTab }
+    return { tab, message, busy, error, reply, trace, experiments, strategies, selected, preview, accessToken, resolved, hitPercent, proxyText, lexicalStatus, send, runExperiment, switchTab }
   },
   template: `
     <div class="shell">
@@ -70,7 +80,7 @@ createApp({
         <section class="card"><h2>回答</h2><div v-if="reply" class="answer"><div class="meta"><span>{{reply.mode}}</span><span>Trace {{reply.trace_id}}</span></div><p>{{reply.reply}}</p><button @click="switchTab('trace')">查看执行轨迹 →</button></div><p v-else class="muted">发送问题后显示实际回答。</p></section>
       </main>
       <main v-else-if="tab==='trace'"><section class="card"><h2>执行轨迹</h2><p v-if="!trace" class="muted">请先在 Chat 发送问题。</p><template v-else><div class="meta"><span>配置 v{{trace.config_version || '—'}}</span><span>切分 {{trace.chunk_strategy || '—'}}</span><span>{{trace.id}}</span></div><div class="flow"><article v-for="(step,index) in trace.contracts" :key="index"><b>{{step.phase}}</b><span>{{step.from}} → {{step.to}}</span><small>{{step.task_id}}</small><pre>{{step.payload}}</pre></article></div><h3>实际检索依据</h3><p v-if="!trace.retrievals?.length" class="muted">本次没有检索记录。</p><article class="source" v-for="(item,index) in trace.retrievals" :key="index"><div class="meta"><b>{{item.source}}</b><span>score {{item.score.toFixed(3)}}</span></div><small>query: {{item.query}}</small><pre>{{item.text}}</pre></article></template></section></main>
-      <main v-else><section class="card"><div class="row"><div><h2>检索复测</h2><p>同一数据与语料快照，对比 fixed 和 recursive 的 Top-3 来源命中。</p></div><button class="primary" :disabled="busy" @click="runExperiment">{{busy?'运行中…':'运行一次复测'}}</button></div><label class="token">访问/管理员令牌（公开只读时可留空）<input v-model="accessToken" type="password" autocomplete="off" placeholder="本地管理员默认 local-demo"></label><p class="note">这是检索指标；回答质量与安全性当前未评测。重启服务会重置生效配置，历史实验仍可读取。</p><p v-if="preview" class="muted">以下是只读基线预览，尚未发布配置或保存实验。</p><div v-if="experiments.length" class="row"><label>历史实验 <select v-model="selected"><option v-for="item in experiments" :key="item.id" :value="item">{{new Date(item.created_at).toLocaleString()}} · {{item.id.slice(0,8)}}</option></select></label></div><template v-if="selected"><div class="metrics"><div><small>优化前 · {{selected.before.strategy}}</small><strong>{{hitPercent(selected.before.hit_rate)}}</strong></div><div><small>优化后 · {{selected.after.strategy}}</small><strong>{{hitPercent(selected.after.hit_rate)}}</strong></div><div><small>变化 · {{selected.before.cases}} 条</small><strong>{{hitPercent(selected.actual_delta)}}</strong></div></div><div class="bar"><span :style="{width:hitPercent(selected.before.hit_rate)}"></span><span :style="{width:hitPercent(selected.after.hit_rate)}"></span></div><div class="meta"><span>数据哈希 {{selected.before.dataset_hash?.slice(0,16)}}…</span><template v-if="selected.decision"><span>门禁 {{selected.decision.Passed?'通过':'未通过'}}</span><span>预测 {{selected.decision.PredictionMatched?'匹配':'未匹配'}}</span><span>配置 v{{selected.decision.Version || '—'}}</span></template></div><h3>失败样例 <small>候选修复 {{resolved}} / {{selected.failures?.length || 0}}</small></h3><div class="cases"><details v-for="item in selected.failures" :key="item.case_id"><summary>{{item.case_id}} · {{item.resolved_by_candidate?'候选已命中':'仍未命中'}}</summary><p>预期来源：{{item.expected_source}}</p><p>实际来源：{{item.retrieved_sources?.join('、') || '无'}}</p><p>归因：{{item.cause}}</p></details></div></template></section></main>
-      <footer>可复现检索实验 · 本地演示数据 · 不将检索命中视作答案正确</footer>
+      <main v-else><section class="card"><div class="row"><div><h2>检索复测</h2><p>同一数据与语料快照，对比 fixed 和 recursive 的 Top-3 来源命中。</p></div><button class="primary" :disabled="busy" @click="runExperiment">{{busy?'运行中…':'运行一次复测'}}</button></div><label class="token">访问/管理员令牌（公开只读时可留空）<input v-model="accessToken" type="password" autocomplete="off" placeholder="本地管理员默认 local-demo"></label><p class="note">三项分开计：来源命中、{{lexicalStatus}}、真实回答未评。代理分数是检索片段与标注的词法重合，不是模型生成的回答。下表四种切分由当前进程对仓库文件现场计算。重启服务会重置生效配置，历史实验仍可读取。</p><div v-if="strategies.length" class="metrics"><div v-for="row in strategies" :key="row.strategy"><small>{{row.strategy}} · 来源命中 / 确定性词法代理已评</small><strong>{{hitPercent(row.hit_rate)}} · {{proxyText(row)}}</strong></div><div><small>真实回答未评</small><strong>—</strong></div></div><p v-if="preview" class="muted">以下是只读基线预览，尚未发布配置或保存实验。</p><div v-if="experiments.length" class="row"><label>历史实验 <select v-model="selected"><option v-for="item in experiments" :key="item.id" :value="item">{{new Date(item.created_at).toLocaleString()}} · {{item.id.slice(0,8)}}</option></select></label></div><template v-if="selected"><div class="metrics"><div><small>来源命中 · 优化前 · {{selected.before.strategy}}</small><strong>{{hitPercent(selected.before.hit_rate)}}</strong></div><div><small>来源命中 · 优化后 · {{selected.after.strategy}}</small><strong>{{hitPercent(selected.after.hit_rate)}}</strong></div><div><small>来源命中变化 · {{selected.before.cases}} 条</small><strong>{{hitPercent(selected.actual_delta)}}</strong></div><div><small>{{lexicalStatus}} · 优化前</small><strong>{{proxyText(selected.before)}}</strong></div><div><small>{{lexicalStatus}} · 优化后</small><strong>{{proxyText(selected.after)}}</strong></div><div><small>真实回答未评</small><strong>—</strong></div></div><div class="bar"><span :style="{width:hitPercent(selected.before.hit_rate)}"></span><span :style="{width:hitPercent(selected.after.hit_rate)}"></span></div><div class="meta"><span>数据哈希 {{selected.before.dataset_hash?.slice(0,16)}}…</span><template v-if="selected.decision"><span>门禁 {{selected.decision.Passed?'通过':'未通过'}}</span><span>预测 {{selected.decision.PredictionMatched?'匹配':'未匹配'}}</span><span>配置 v{{selected.decision.Version || '—'}}</span></template></div><h3>失败样例 <small>候选修复 {{resolved}} / {{selected.failures?.length || 0}}</small></h3><div class="cases"><details v-for="item in selected.failures" :key="item.case_id"><summary>{{item.case_id}} · {{item.resolved_by_candidate?'候选已命中':'仍未命中'}}</summary><p>预期来源：{{item.expected_source}}</p><p>实际来源：{{item.retrieved_sources?.join('、') || '无'}}</p><p>归因：{{item.cause}}</p></details></div></template></section></main>
+      <footer>可复现检索实验 · 来源命中与确定性词法代理 · 真实回答未评</footer>
     </div>`
 }).mount('#app')

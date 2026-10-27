@@ -23,6 +23,7 @@ type Experiment struct {
 	ActualDelta   float64      `json:"actual_delta"`
 	Decision      Decision     `json:"decision"`
 	AnswerQuality string       `json:"answer_quality"`
+	Evaluation    Evaluation   `json:"evaluation"`
 }
 
 // NewExperiment gives each run a random identity and explicit quality boundary.
@@ -31,13 +32,23 @@ func NewExperiment(before, after RetrievalRun, prediction Prediction, decision D
 	if _, err := rand.Read(random[:]); err != nil {
 		return Experiment{}, err
 	}
-	quality := "not_evaluated"
-	if before.QualityMode != "" || after.QualityMode != "" {
-		quality = after.QualityMode
-	}
-	return Experiment{ID: hex.EncodeToString(random[:]), CreatedAt: time.Now().UTC(), Before: before, After: after,
+	ev := DescribeEvaluation(before, after)
+	exp := Experiment{ID: hex.EncodeToString(random[:]), CreatedAt: time.Now().UTC(), Before: before, After: after,
 		Failures: DiagnoseRetrieval(before, after), Prediction: prediction, ActualDelta: after.HitRate - before.HitRate,
-		Decision: decision, AnswerQuality: quality}, nil
+		Decision: decision, AnswerQuality: ev.LexicalProxy, Evaluation: ev}
+	return exp, nil
+}
+
+// normalizeExperiment rewrites legacy quality tokens when a record is read.
+// It does not persist the rewrite; callers keep the file unchanged.
+func normalizeExperiment(exp *Experiment) {
+	if exp.Evaluation.SourceHit == "" {
+		exp.Evaluation = DescribeEvaluation(exp.Before, exp.After)
+	}
+	switch exp.AnswerQuality {
+	case "", "not_evaluated", "deterministic_proxy":
+		exp.AnswerQuality = exp.Evaluation.LexicalProxy
+	}
 }
 
 var ErrExperimentNotFound = errors.New("experiment not found")
@@ -93,6 +104,7 @@ func (h History) Get(id string) (Experiment, error) {
 	if err := json.Unmarshal(data, &exp); err != nil {
 		return Experiment{}, err
 	}
+	normalizeExperiment(&exp)
 	return exp, nil
 }
 

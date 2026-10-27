@@ -2,7 +2,7 @@
 
 > 4 类评测器怎么算分、HitRate@K 怎么算、门禁怎么卡。
 
-> **实现边界**：当前 `POST /v1/evolve` 会批量复测 98 条公开问题的来源命中，并将检索上下文送入 `internal/eval` 的规则评测器和确定性词法 Prober，记录 `deterministic_proxy` 质量、引用失败数和通过率后执行门禁。它仍不是实时生成答案，也不是真实 LLM Judge、claim-level faithfulness 或安全评测；这些属于后续接入项。
+> **实现边界**：当前接口分开返回三项：来源命中、确定性词法代理已评（检索上下文的词法质量、引用失败和通过率）、真实回答未评。确定性词法代理不是实时生成的回答，也不是真实 LLM Judge、claim-level faithfulness 或安全评测。
 
 ## 评测器（internal/eval/）
 
@@ -70,7 +70,7 @@ Trace 采集（mq 削峰 + 按月分表）
 
 三条都过才灰度。任一不过，优化任务标 failed，回流给归因引擎重判。
 
-上述是目标门禁。当前接口已检查同一数据快照下的检索命中、确定性质量代理不降和新增引用失败为零；仍不执行真实模型 G-Eval、claim-level Faithfulness、灰度监控或自动回滚。因此它的通过代表“可复现离线代理实验”通过，不能代表生产答案质量通过。
+上述是目标门禁。当前接口已检查同一数据快照下的来源命中，以及确定性词法代理已评（代理分数不降、无新增引用失败）；真实回答未评，仍不执行真实模型 G-Eval、claim-level Faithfulness、灰度监控或自动回滚。因此它的通过代表“可复现离线代理实验”通过，不能代表生产答案质量通过。
 
 ## 怎么跑
 
@@ -86,14 +86,14 @@ go test -race ./internal/eval/
 # 详见 docs/roadmap.md
 ```
 
-输出示例（`make bench`）：
+2026-10-27 17:19（北京时间）在 README 补写真实 DeepSeek 端到端说明后重新执行 `go run ./cmd/bench`（本机 Go 1.27.3，98 条，HashEmbedder，K=3，无付费 API；没有调用 DeepSeek）。README 在评估集里，这次改动让 fixed 从 19.4% 变为 18.4%、MRR 和代理分数也有变化；下表与 README 同名表逐格相同，随新增 `docs/e2e-deepseek-2026-10-27.md` 的同一次提交写入。上一版数字写在提交 `f4c58c09d783ce81f230da1356eebbfa62c93d6c`。确定性代理分数是词法 GEval 均值（0–1）。真实回答未评。`docs/05` 不在评估集的 sourceDoc 里。再改 README 或 `docs/03-benchmark.md` 后必须重跑，不能把下表当成固定目标。
 
-```
-| 切分策略 | HitRate@K | MRR@K |
-|---|---|---|
-| fixed | 以当前 `make bench` 输出为准 | 同左 |
-| recursive | 以当前 `make bench` 输出为准 | 同左 |
-```
+| 切分策略 | 来源命中 HitRate@3 | MRR@3 | 确定性代理分数 | 通过率 | 引用失败 |
+|---|---|---|---|---|---|
+| fixed | 18.4% | 12.6% | 0.4451 | 1.0% | 80 |
+| recursive | 33.7% | 24.7% | 0.4380 | 0.0% | 65 |
+| semantic | 15.3% | 11.2% | 0.4405 | 1.0% | 83 |
+| parent-child | 19.4% | 11.4% | 0.4402 | 0.0% | 79 |
 
 ## 设计取舍：为什么规则优先、LLM-as-Judge 兜底
 

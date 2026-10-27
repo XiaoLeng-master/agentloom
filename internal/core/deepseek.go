@@ -11,6 +11,10 @@ import (
 	"time"
 )
 
+// DefaultModel is the Chat Completions model used when Model is empty.
+// agentd uses the same value unless DEEPSEEK_MODEL overrides it.
+const DefaultModel = "deepseek-flash"
+
 // DeepSeekClient calls the official Chat Completions endpoint.
 type DeepSeekClient struct {
 	APIKey     string
@@ -20,6 +24,21 @@ type DeepSeekClient struct {
 	HTTPClient *http.Client
 	MaxTokens  int
 	NoThinking bool
+	// OnCall, when set, receives one record per HTTP attempt. It never
+	// carries the API key or request headers.
+	OnCall func(CallStats)
+}
+
+// CallStats describes one Chat Completions attempt for local metering.
+type CallStats struct {
+	Model            string        // model requested
+	ResponseModel    string        // model reported by the API, if any
+	Status           int           // HTTP status, 0 when the request failed before a response
+	Latency          time.Duration // wall time of the HTTP exchange
+	PromptTokens     int
+	CompletionTokens int
+	TotalTokens      int
+	Err              string
 }
 
 // Complete converts runtime messages to DeepSeek's chat format and validates its reply.
@@ -33,7 +52,7 @@ func (c DeepSeekClient) Complete(ctx context.Context, msgs []Message) (Message, 
 	}
 	model := c.Model
 	if model == "" {
-		model = "deepseek-chat"
+		model = DefaultModel
 	}
 	items := make([]map[string]any, 0, len(msgs))
 	for _, m := range msgs {
@@ -81,15 +100,39 @@ func (c DeepSeekClient) Complete(ctx context.Context, msgs []Message) (Message, 
 	if client == nil {
 		client = &http.Client{Timeout: 30 * time.Second}
 	}
+	stats := CallStats{Model: model}
+	report := func(err error) {
+		if err != nil {
+			stats.Err = err.Error()
+		}
+		if c.OnCall != nil {
+			c.OnCall(stats)
+		}
+	}
+	started := time.Now()
 	resp, err := client.Do(req)
 	if err != nil {
-		return Message{}, fmt.Errorf("deepseek request: %w", err)
+		stats.Latency = time.Since(started)
+		err = fmt.Errorf("deepseek request: %w", err)
+		report(err)
+		return Message{}, err
 	}
 	defer resp.Body.Close()
+	stats.Status = resp.StatusCode
 	if resp.StatusCode != http.StatusOK {
-		return Message{}, fmt.Errorf("deepseek HTTP %d", resp.StatusCode)
+		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 300))
+		stats.Latency = time.Since(started)
+		err = fmt.Errorf("deepseek HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(snippet)))
+		report(err)
+		return Message{}, err
 	}
 	var decoded struct {
+		Model string `json:"model"`
+		Usage struct {
+			PromptTokens     int `json:"prompt_tokens"`
+			CompletionTokens int `json:"completion_tokens"`
+			TotalTokens      int `json:"total_tokens"`
+		} `json:"usage"`
 		Choices []struct {
 			Message struct {
 				Content   string `json:"content"`
@@ -103,12 +146,23 @@ func (c DeepSeekClient) Complete(ctx context.Context, msgs []Message) (Message, 
 			} `json:"message"`
 		} `json:"choices"`
 	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 2<<20)).Decode(&decoded); err != nil {
-		return Message{}, fmt.Errorf("deepseek response: %w", err)
+	decodeErr := json.NewDecoder(io.LimitReader(resp.Body, 2<<20)).Decode(&decoded)
+	stats.Latency = time.Since(started)
+	if decodeErr != nil {
+		err = fmt.Errorf("deepseek response: %w", decodeErr)
+		report(err)
+		return Message{}, err
 	}
+	stats.ResponseModel = decoded.Model
+	stats.PromptTokens = decoded.Usage.PromptTokens
+	stats.CompletionTokens = decoded.Usage.CompletionTokens
+	stats.TotalTokens = decoded.Usage.TotalTokens
 	if len(decoded.Choices) == 0 {
-		return Message{}, fmt.Errorf("deepseek response has no choices")
+		err = fmt.Errorf("deepseek response has no choices")
+		report(err)
+		return Message{}, err
 	}
+	report(nil)
 	msg := decoded.Choices[0].Message
 	out := Message{Role: RoleAssistant, Content: msg.Content}
 	for _, call := range msg.ToolCalls {

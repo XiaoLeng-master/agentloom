@@ -4,11 +4,11 @@ AgentLoom 的公开演示边界是“可访问、可审计、可停止”的作�
 
 ## 本地模式
 
-不设置 `AGENTLOOM_PUBLIC_MODE` 时，Chat、Trace 和只读 Benchmark 可直接访问；会更新当前配置的 `POST /v1/evolve` 使用本地演示管理员令牌：
+不设置 `AGENTLOOM_PUBLIC_MODE` 时，Chat、Trace 和只读 Benchmark 可直接访问。`POST /v1/evolve` 的管理员令牌由进程内固定为 `local-demo`。`cmd/agentd` 只在公开模式读取 `AGENTLOOM_ADMIN_TOKEN`；在本地模式 export 它不会改变令牌。
 
 ```bash
-export AGENTLOOM_ADMIN_TOKEN=local-demo
 make run
+curl -H 'Authorization: Bearer local-demo' -X POST localhost:8080/v1/evolve
 ```
 
 ## 公开模式
@@ -28,6 +28,8 @@ make run
 
 ## 仍未声称完成的能力
 
-- 当前质量评测是 `deterministic_proxy`，用于复现检索上下文、引用和词法重合；尚未接入真实 LLM Judge。
+- 当前分开计三项：来源命中、确定性词法代理已评（检索片段与标注的词法重合、引用失败和通过率）、真实回答未评。尚未接入真实 LLM Judge。四种切分的实测表见 README 与 `docs/05-evaluation-method.md`。
+- 2026-10-27 在本地公开模式用真实 `deepseek-flash` 跑过一次小规模 Chat 端到端：4 个请求、8 次模型调用，记录见 `docs/e2e-deepseek-2026-10-27.md`。这不是规模化评测，真实回答质量仍未评；evolve 不调用模型。调用官方 API 会产生费用。测试和 `go run ./cmd/bench` 不读取 `DEEPSEEK_API_KEY`。
+- 可运行的 `agentd` 是单进程。热更新、限流和内存队列都在这个进程里，没有改成多实例或分布式。
 - Trace 已可查询并异步写入内存或 Redis，但尚未实现 Trace 触发的自动批评测、灰度发布和自动回滚。
 - Kafka、etcd、Milvus、用户系统、多租户和生产级密钥管理不属于当前公开演示的已交付范围。
