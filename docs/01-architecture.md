@@ -20,7 +20,7 @@
 
 ## 数据流：一次请求怎么走完
 
-1. 用户请求经 **网关 Filter Chain**：API Key 认证 → Prompt 注入检测 → 全局/租户两级限流（令牌桶）。
+1. 用户请求经 **网关 Filter Chain**：API Key 认证 → Prompt 注入检测 → 全局/租户两级限流（令牌桶，目标架构；当前入口是 AccessPolicy、滑动窗口和并发信号量，见 [`docs/08-concurrency-quota.md`](08-concurrency-quota.md)）。
 2. **Router** 按配置/关键词/模型意图路由到对应 Agent，做任务拆解与优先级调度。
 3. 任务进入 **执行面** 三池：
    - Planner 池（贵模型，少而精）：拆任务、出执行计划；
@@ -46,7 +46,7 @@
 
 - **① Trace 采集**：结构化轨迹，含工具结果 ID、延迟、token 计数；高频写不阻塞主链路。
 - **② Kafka 削峰**：Trace 落 Kafka，可回放做回归；评测与主链路故障隔离。
-- **③ 批量评测**：62 条正式回归集 + 8 条冒烟；4 类评测器（Prompt / RAG / Skill / Agent）；并发 worker + 信号量限流。
+- **③ 批量评测**：62 条正式回归集 + 8 条冒烟；4 类评测器（Prompt / RAG / Skill / Agent）；并发 worker + 信号量并发控制。
 - **④ 失败归因**：失败轨迹聚类，归因到检索/Prompt/工具/模型哪一层；规则优先、LLM-as-Judge 兜底。
 - **⑤ 优化任务**：产出可执行的 diff（改 Prompt、换分块策略、修工具描述）；版本化、可回滚。
 - **⑥ 复测门禁**：同数据集同 case 幂等比较；目标 case 解决且无新回归才放行。

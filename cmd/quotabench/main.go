@@ -38,11 +38,14 @@ func main() {
 	counter := &execCounter{sleep: *execSleep, per: map[string]int{}, perPeak: map[string]int{}}
 	plan := planLLM{body: subtasksJSON(*tasks)}
 	o := orchestrator.NewOrchestrator(0)
-	o.SetConcurrency(orchestrator.ConcurrencyConfig{
+	if err := o.SetConcurrency(orchestrator.ConcurrencyConfig{
 		Workers:       *workers,
 		GlobalLimit:   *global,
 		PerAgentLimit: *perAgent,
-	})
+	}); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
 	o.AddAgent(orchestrator.RolePlanner, core.NewAgent("planner", "plan", plan, nil, 1))
 	o.AddAgent(orchestrator.RoleExecutor, core.NewAgent("exec-a", "exec", &execLLM{name: "exec-a", c: counter}, nil, 1))
 	o.AddAgent(orchestrator.RoleExecutor, core.NewAgent("exec-b", "exec", &execLLM{name: "exec-b", c: counter}, nil, 1))

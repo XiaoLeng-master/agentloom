@@ -123,12 +123,7 @@ type Orchestrator struct {
 	globalLimit   int
 	perAgentLimit int
 	limiter       *quota.Limiter
-
-	// metricsMu guards the worker-pool backlog gauge and the combined
-	// queue high-water mark (pool backlog + limiter waiters).
-	metricsMu  sync.Mutex
-	poolQueued int
-	peakQueued int
+	running       int
 }
 
 // NewOrchestrator returns an empty Orchestrator. maxReplan caps how many
@@ -138,7 +133,9 @@ func NewOrchestrator(maxReplan int) *Orchestrator {
 		maxReplan = 2
 	}
 	o := &Orchestrator{pools: make(map[Role]*Pool), maxReplan: maxReplan}
-	o.SetConcurrency(ConcurrencyConfig{})
+	if err := o.SetConcurrency(ConcurrencyConfig{}); err != nil {
+		panic(err)
+	}
 	return o
 }
 
@@ -196,7 +193,15 @@ func (o *Orchestrator) pickRole(role Role) *core.Agent {
 //  4. If any Verdict.Pass is false and replans remain, Planner.Run(feedback)
 //     re-plans; otherwise the turn ends with whatever passed.
 func (o *Orchestrator) Run(ctx context.Context, userQuery string) (string, []Contract, error) {
-	workers, lim := o.snapshotConc()
+	o.concMu.Lock()
+	o.running++
+	workers, lim := o.workers, o.limiter
+	o.concMu.Unlock()
+	defer func() {
+		o.concMu.Lock()
+		o.running--
+		o.concMu.Unlock()
+	}()
 	var trace []Contract
 	subtasks, planPayload, err := o.plan(ctx, o.pickRole(RolePlanner), userQuery)
 	if err != nil {
@@ -208,11 +213,16 @@ func (o *Orchestrator) Run(ctx context.Context, userQuery string) (string, []Con
 	for replan := 0; replan <= o.maxReplan; replan++ {
 		outcomes := o.executeSubtasks(ctx, workers, lim, subtasks)
 		if i, failed := firstExecError(outcomes); failed {
-			for j := 0; j < i; j++ {
-				results[subtasks[j].ID] = outcomes[j].output
+			for j := range outcomes {
+				payload := outcomes[j].output
+				if outcomes[j].err != nil {
+					payload = outcomes[j].err.Error()
+				} else {
+					results[subtasks[j].ID] = outcomes[j].output
+				}
 				trace = append(trace, Contract{
 					From: RoleExecutor, To: RoleVerifier, TaskID: subtasks[j].ID,
-					Phase: PhaseExecute, Payload: outcomes[j].output,
+					Phase: PhaseExecute, Payload: payload,
 				})
 			}
 			return "", trace, outcomes[i].err
@@ -307,6 +317,9 @@ var (
 	ErrNoExecutor      = errors.New("orchestrator: executor pool empty")
 	ErrVerification    = errors.New("orchestrator: verification failed")
 	ErrReplanExhausted = errors.New("orchestrator: replan budget exhausted")
+	// ErrConcurrencyBusy is returned when SetConcurrency runs during Run.
+	// Two limiters at once would let in-flight turns exceed the global cap.
+	ErrConcurrencyBusy = errors.New("orchestrator: SetConcurrency while a turn is running")
 )
 
 func firstExecError(outcomes []execOutcome) (int, bool) {

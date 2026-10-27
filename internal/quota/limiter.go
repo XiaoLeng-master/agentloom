@@ -28,6 +28,11 @@ type Stats struct {
 	Rejected     int64 `json:"rejected"`
 	PeakInflight int   `json:"peak_inflight"`
 	PeakQueued   int   `json:"peak_queued"`
+	// Backlog is work counted outside the semaphore, such as a worker-pool
+	// channel. PeakCombined is the high-water mark of Backlog+Queued, taken
+	// under this limiter's lock so a handoff is not counted twice.
+	Backlog      int   `json:"backlog"`
+	PeakCombined int   `json:"peak_combined"`
 	Admitted     int64 `json:"admitted"`
 	GlobalLimit  int   `json:"global_limit"`
 	PerKeyLimit  int   `json:"per_key_limit"`
@@ -42,11 +47,13 @@ type Limiter struct {
 	mu           sync.Mutex
 	inflight     int
 	queued       int
+	backlog      int
 	per          map[string]int
 	waiters      []*ticket
 	rejected     int64
 	peakInflight int
 	peakQueued   int
+	peakCombined int
 	admitted     int64
 	onChange     func()
 }
@@ -81,16 +88,43 @@ func (l *Limiter) SetOnChange(fn func()) {
 	l.mu.Unlock()
 }
 
+// NoteBacklog adds tasks waiting outside the semaphore, such as jobs sitting
+// in a worker-pool channel. delta may be negative when those jobs are
+// abandoned before Acquire. The combined peak is updated under the same lock
+// as the semaphore queue.
+func (l *Limiter) NoteBacklog(delta int) {
+	l.mu.Lock()
+	l.backlog += delta
+	if l.backlog < 0 {
+		l.backlog = 0
+	}
+	l.noteCombinedLocked()
+	l.mu.Unlock()
+	l.notify()
+}
+
 // Acquire waits until both the global semaphore and the per-key semaphore have
 // a free slot. The returned release function must be called exactly once when
 // the work finishes; extra calls are ignored. If ctx ends while the caller is
 // queued, Acquire returns ErrRejected and increments the rejection counter.
 func (l *Limiter) Acquire(ctx context.Context, key string) (func(), error) {
+	return l.acquire(ctx, key, false)
+}
+
+// AcquireFromBacklog moves one task previously counted by NoteBacklog into the
+// semaphore. The move and any enqueue happen under one lock, so the task is
+// never in both queues at the sample used for PeakCombined.
+func (l *Limiter) AcquireFromBacklog(ctx context.Context, key string) (func(), error) {
+	return l.acquire(ctx, key, true)
+}
+
+func (l *Limiter) acquire(ctx context.Context, key string, fromBacklog bool) (func(), error) {
 	if key == "" {
 		key = "_"
 	}
 	if err := ctx.Err(); err != nil {
 		l.mu.Lock()
+		l.dropBacklogLocked(fromBacklog)
 		l.rejected++
 		l.mu.Unlock()
 		l.notify()
@@ -98,6 +132,7 @@ func (l *Limiter) Acquire(ctx context.Context, key string) (func(), error) {
 	}
 
 	l.mu.Lock()
+	l.dropBacklogLocked(fromBacklog)
 	if len(l.waiters) == 0 && l.canAdmit(key) {
 		l.admitLocked(key)
 		l.admitted++
@@ -111,6 +146,7 @@ func (l *Limiter) Acquire(ctx context.Context, key string) (func(), error) {
 	if l.queued > l.peakQueued {
 		l.peakQueued = l.queued
 	}
+	l.noteCombinedLocked()
 	// A later waiter may be eligible even when an earlier key is saturated.
 	l.grantLocked()
 	l.mu.Unlock()
@@ -121,6 +157,7 @@ func (l *Limiter) Acquire(ctx context.Context, key string) (func(), error) {
 		l.mu.Lock()
 		if l.dequeue(t) {
 			l.queued--
+			l.noteCombinedLocked()
 			l.rejected++
 			l.mu.Unlock()
 			l.notify()
@@ -175,9 +212,26 @@ func (l *Limiter) statsLocked() Stats {
 		Rejected:     l.rejected,
 		PeakInflight: l.peakInflight,
 		PeakQueued:   l.peakQueued,
+		Backlog:      l.backlog,
+		PeakCombined: l.peakCombined,
 		Admitted:     l.admitted,
 		GlobalLimit:  l.globalMax,
 		PerKeyLimit:  l.perMax,
+	}
+}
+
+func (l *Limiter) dropBacklogLocked(fromBacklog bool) {
+	if !fromBacklog || l.backlog <= 0 {
+		return
+	}
+	l.backlog--
+	l.noteCombinedLocked()
+}
+
+func (l *Limiter) noteCombinedLocked() {
+	total := l.backlog + l.queued
+	if total > l.peakCombined {
+		l.peakCombined = total
 	}
 }
 

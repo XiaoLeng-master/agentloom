@@ -17,12 +17,21 @@ import (
 // entered is the number of calls currently blocked.
 type holdLLM struct {
 	entered *atomic.Int32
+	peak    *atomic.Int32
 	release <-chan struct{}
 }
 
 func (h *holdLLM) Complete(ctx context.Context, msgs []core.Message) (core.Message, error) {
 	if h.entered != nil {
-		h.entered.Add(1)
+		n := h.entered.Add(1)
+		if h.peak != nil {
+			for {
+				p := h.peak.Load()
+				if n <= p || h.peak.CompareAndSwap(p, n) {
+					break
+				}
+			}
+		}
 		defer h.entered.Add(-1)
 	}
 	select {
@@ -34,6 +43,13 @@ func (h *holdLLM) Complete(ctx context.Context, msgs []core.Message) (core.Messa
 		return core.Message{Role: core.RoleAssistant, Content: in}, nil
 	case <-ctx.Done():
 		return core.Message{}, ctx.Err()
+	}
+}
+
+func mustSet(t *testing.T, o *Orchestrator, cfg ConcurrencyConfig) {
+	t.Helper()
+	if err := o.SetConcurrency(cfg); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -64,12 +80,12 @@ func TestWorkerPoolCapsInflight(t *testing.T) {
 	const workers = 2
 	const tasks = 6
 	release := make(chan struct{})
-	var entered atomic.Int32
+	var entered, peak atomic.Int32
 	plan, verdicts := planTasks(tasks)
 	o := NewOrchestrator(0)
-	o.SetConcurrency(ConcurrencyConfig{Workers: workers, GlobalLimit: 100, PerAgentLimit: 100})
+	mustSet(t, o, ConcurrencyConfig{Workers: workers, GlobalLimit: 100, PerAgentLimit: 100})
 	o.AddAgent(RolePlanner, newAgent(&scriptLLM{script: []string{plan}}))
-	o.AddAgent(RoleExecutor, core.NewAgent("exec", "x", &holdLLM{entered: &entered, release: release}, nil, 1))
+	o.AddAgent(RoleExecutor, core.NewAgent("exec", "x", &holdLLM{entered: &entered, peak: &peak, release: release}, nil, 1))
 	o.AddAgent(RoleVerifier, newAgent(&scriptLLM{script: verdicts}))
 
 	errCh := make(chan error, 1)
@@ -92,6 +108,9 @@ func TestWorkerPoolCapsInflight(t *testing.T) {
 	if err := <-errCh; err != nil {
 		t.Fatal(err)
 	}
+	if got := peak.Load(); got > workers {
+		t.Fatalf("observed peak inflight=%d exceeded workers %d", got, workers)
+	}
 	if peak := o.ConcurrencyStats().PeakInflight; peak > workers {
 		t.Fatalf("peak inflight=%d exceeded workers %d", peak, workers)
 	}
@@ -104,7 +123,7 @@ func TestGlobalQuotaCapsInflight(t *testing.T) {
 	var entered atomic.Int32
 	plan, verdicts := planTasks(tasks)
 	o := NewOrchestrator(0)
-	o.SetConcurrency(ConcurrencyConfig{Workers: tasks, GlobalLimit: global, PerAgentLimit: tasks})
+	mustSet(t, o, ConcurrencyConfig{Workers: tasks, GlobalLimit: global, PerAgentLimit: tasks})
 	o.AddAgent(RolePlanner, newAgent(&scriptLLM{script: []string{plan}}))
 	o.AddAgent(RoleExecutor, core.NewAgent("exec", "x", &holdLLM{entered: &entered, release: release}, nil, 1))
 	o.AddAgent(RoleVerifier, newAgent(&scriptLLM{script: verdicts}))
@@ -137,7 +156,7 @@ func TestPerAgentQuota(t *testing.T) {
 	var enteredA, enteredB atomic.Int32
 	plan, verdicts := planTasks(tasks)
 	o := NewOrchestrator(0)
-	o.SetConcurrency(ConcurrencyConfig{Workers: tasks, GlobalLimit: 10, PerAgentLimit: 1})
+	mustSet(t, o, ConcurrencyConfig{Workers: tasks, GlobalLimit: 10, PerAgentLimit: 1})
 	o.AddAgent(RolePlanner, newAgent(&scriptLLM{script: []string{plan}}))
 	o.AddAgent(RoleExecutor, core.NewAgent("exec-a", "x", &holdLLM{entered: &enteredA, release: release}, nil, 1))
 	o.AddAgent(RoleExecutor, core.NewAgent("exec-b", "x", &holdLLM{entered: &enteredB, release: release}, nil, 1))
@@ -171,7 +190,7 @@ func TestQuotaTimeoutRejects(t *testing.T) {
 	release := make(chan struct{})
 	var entered atomic.Int32
 	o := NewOrchestrator(0)
-	o.SetConcurrency(ConcurrencyConfig{Workers: 2, GlobalLimit: 1, PerAgentLimit: 1})
+	mustSet(t, o, ConcurrencyConfig{Workers: 2, GlobalLimit: 1, PerAgentLimit: 1})
 	o.AddAgent(RolePlanner, newAgent(&scriptLLM{script: []string{
 		mustJSON([]SubTask{{ID: "t1", Input: "hold"}}),
 		mustJSON([]SubTask{{ID: "t1", Input: "wait"}}),
@@ -208,7 +227,7 @@ func TestQuotaTimeoutRejects(t *testing.T) {
 
 func TestResultOrderStable(t *testing.T) {
 	o := NewOrchestrator(0)
-	o.SetConcurrency(ConcurrencyConfig{Workers: 3, GlobalLimit: 3, PerAgentLimit: 3})
+	mustSet(t, o, ConcurrencyConfig{Workers: 3, GlobalLimit: 3, PerAgentLimit: 3})
 	o.AddAgent(RolePlanner, newAgent(&scriptLLM{script: []string{
 		mustJSON([]SubTask{
 			{ID: "t1", Input: "slow-a"},

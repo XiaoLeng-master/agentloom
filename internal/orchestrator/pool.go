@@ -49,8 +49,10 @@ type ConcurrencyStats struct {
 }
 
 // SetConcurrency installs the worker-pool size and a fresh two-level limiter.
-// Call it before Run. In-flight acquires keep the previous limiter.
-func (o *Orchestrator) SetConcurrency(cfg ConcurrencyConfig) {
+// It refuses to run during Run: in-flight turns keep their limiter, and a
+// second limiter would double the global cap. The worker count is a per-turn
+// goroutine cap plus this shared semaphore, not one process-wide pool.
+func (o *Orchestrator) SetConcurrency(cfg ConcurrencyConfig) error {
 	if cfg.Workers <= 0 {
 		cfg.Workers = DefaultWorkers
 	}
@@ -61,13 +63,16 @@ func (o *Orchestrator) SetConcurrency(cfg ConcurrencyConfig) {
 		cfg.PerAgentLimit = DefaultPerAgentLimit
 	}
 	lim := quota.New(cfg.GlobalLimit, cfg.PerAgentLimit)
-	lim.SetOnChange(func() { o.recordQueuePeak() })
 	o.concMu.Lock()
+	defer o.concMu.Unlock()
+	if o.running > 0 {
+		return ErrConcurrencyBusy
+	}
 	o.workers = cfg.Workers
 	o.globalLimit = cfg.GlobalLimit
 	o.perAgentLimit = cfg.PerAgentLimit
 	o.limiter = lim
-	o.concMu.Unlock()
+	return nil
 }
 
 // ConcurrencyStats returns the current concurrency, queue depth, and rejection
@@ -83,74 +88,20 @@ func (o *Orchestrator) ConcurrencyStats() ConcurrencyStats {
 	if lim != nil {
 		st = lim.Stats()
 	}
-	o.metricsMu.Lock()
-	poolQueued := o.poolQueued
-	peak := o.peakQueued
-	o.metricsMu.Unlock()
-	sum := poolQueued + st.Queued
-	if sum > peak {
-		peak = sum
-	}
 	return ConcurrencyStats{
 		Inflight:        st.Inflight,
-		Queued:          sum,
+		Queued:          st.Backlog + st.Queued,
 		Rejected:        st.Rejected,
 		PeakInflight:    st.PeakInflight,
-		PeakQueued:      peak,
+		PeakQueued:      st.PeakCombined,
 		QuotaPeakQueued: st.PeakQueued,
-		PoolQueued:      poolQueued,
+		PoolQueued:      st.Backlog,
 		QuotaQueued:     st.Queued,
 		Admitted:        st.Admitted,
 		Workers:         workers,
 		GlobalLimit:     global,
 		PerAgentLimit:   per,
 	}
-}
-
-func (o *Orchestrator) snapshotConc() (int, *quota.Limiter) {
-	o.concMu.RLock()
-	defer o.concMu.RUnlock()
-	return o.workers, o.limiter
-}
-
-func (o *Orchestrator) addPoolQueued(delta int) {
-	o.metricsMu.Lock()
-	o.poolQueued += delta
-	if o.poolQueued < 0 {
-		o.poolQueued = 0
-	}
-	local := o.poolQueued
-	o.metricsMu.Unlock()
-	q := 0
-	o.concMu.RLock()
-	lim := o.limiter
-	o.concMu.RUnlock()
-	if lim != nil {
-		q = lim.Stats().Queued
-	}
-	o.notePeak(local + q)
-}
-
-func (o *Orchestrator) recordQueuePeak() {
-	o.concMu.RLock()
-	lim := o.limiter
-	o.concMu.RUnlock()
-	queued := 0
-	if lim != nil {
-		queued = lim.Stats().Queued
-	}
-	o.metricsMu.Lock()
-	local := o.poolQueued
-	o.metricsMu.Unlock()
-	o.notePeak(local + queued)
-}
-
-func (o *Orchestrator) notePeak(total int) {
-	o.metricsMu.Lock()
-	if total > o.peakQueued {
-		o.peakQueued = total
-	}
-	o.metricsMu.Unlock()
 }
 
 type execJob struct {
@@ -164,9 +115,13 @@ type execOutcome struct {
 	err    error
 }
 
-// executeSubtasks runs every subtask on a bounded worker pool. Picks happen
+// executeSubtasks runs every subtask on a per-turn worker cap. Picks happen
 // on the caller goroutine so round-robin order stays deterministic. The pool
-// joins before returning so the caller can verify in task order.
+// joins before returning so the caller can verify in task order. The first
+// executor error cancels the derived context so later subtasks stop instead
+// of running out the slowest call. A nil limiter only happens for a zero
+// Orchestrator that skipped NewOrchestrator; stats for that fallback are not
+// visible on the parent.
 func (o *Orchestrator) executeSubtasks(ctx context.Context, workers int, lim *quota.Limiter, subtasks []SubTask) []execOutcome {
 	n := len(subtasks)
 	out := make([]execOutcome, n)
@@ -182,6 +137,8 @@ func (o *Orchestrator) executeSubtasks(ctx context.Context, workers int, lim *qu
 	if lim == nil {
 		lim = quota.New(workers, workers)
 	}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 
 	jobs := make(chan execJob)
 	var wg sync.WaitGroup
@@ -190,13 +147,15 @@ func (o *Orchestrator) executeSubtasks(ctx context.Context, workers int, lim *qu
 		go func() {
 			defer wg.Done()
 			for job := range jobs {
-				o.addPoolQueued(-1)
 				out[job.idx] = runExecutor(ctx, lim, job)
+				if out[job.idx].err != nil {
+					cancel()
+				}
 			}
 		}()
 	}
 
-	o.addPoolQueued(n)
+	lim.NoteBacklog(n)
 	func() {
 		defer close(jobs)
 		for i, st := range subtasks {
@@ -204,9 +163,9 @@ func (o *Orchestrator) executeSubtasks(ctx context.Context, workers int, lim *qu
 			select {
 			case <-ctx.Done():
 				for j := i; j < n; j++ {
-					o.addPoolQueued(-1)
+					lim.NoteBacklog(-1)
 					lim.Reject()
-					out[j].err = fmt.Errorf("executor %s: %w: %w", subtasks[j].ID, quota.ErrRejected, ctx.Err())
+					out[j].err = executorFailure(subtasks[j].ID, fmt.Errorf("%w: %w", quota.ErrRejected, ctx.Err()))
 				}
 				return
 			case jobs <- job:
@@ -217,18 +176,28 @@ func (o *Orchestrator) executeSubtasks(ctx context.Context, workers int, lim *qu
 	return out
 }
 
-func runExecutor(ctx context.Context, lim *quota.Limiter, job execJob) execOutcome {
+func runExecutor(ctx context.Context, lim *quota.Limiter, job execJob) (outcome execOutcome) {
+	defer func() {
+		if r := recover(); r != nil {
+			outcome = execOutcome{err: fmt.Errorf("executor %s panic: %v", job.st.ID, r)}
+		}
+	}()
 	if job.agent == nil {
+		lim.NoteBacklog(-1)
 		return execOutcome{err: ErrNoExecutor}
 	}
-	release, err := lim.Acquire(ctx, job.agent.Name())
+	release, err := lim.AcquireFromBacklog(ctx, job.agent.Name())
 	if err != nil {
-		return execOutcome{err: fmt.Errorf("executor %s: %w", job.st.ID, err)}
+		return execOutcome{err: executorFailure(job.st.ID, err)}
 	}
 	defer release()
 	out, err := job.agent.Run(ctx, job.st.Input)
 	if err != nil {
-		return execOutcome{err: fmt.Errorf("executor %s: %w", job.st.ID, err)}
+		return execOutcome{err: executorFailure(job.st.ID, err)}
 	}
 	return execOutcome{output: out}
+}
+
+func executorFailure(id string, err error) error {
+	return fmt.Errorf("executor %s: %w", id, err)
 }
