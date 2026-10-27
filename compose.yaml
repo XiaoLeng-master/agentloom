@@ -1,4 +1,6 @@
 services:
+  # Trace persistence and the optional cache L2 share this Redis.
+  # Leave AGENTLOOM_REDIS_ADDR unset to keep caches at L1 only. See docs/11-multilevel-cache.md.
   redis:
     image: redis:7.4.6-alpine
     command: ["redis-server", "--appendonly", "yes"]

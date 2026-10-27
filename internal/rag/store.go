@@ -32,6 +32,17 @@ func (s *MemoryStore) Add(chunks []Chunk, vecs [][]float32) {
 	}
 }
 
+// RemoveSource drops every chunk that came from source.
+func (s *MemoryStore) RemoveSource(source string) {
+	kept := s.items[:0]
+	for _, item := range s.items {
+		if item.chunk.Source != source {
+			kept = append(kept, item)
+		}
+	}
+	s.items = kept
+}
+
 func (s *MemoryStore) Search(q []float32, k int) []ScoredChunk {
 	scored := make([]ScoredChunk, 0, len(s.items))
 	for _, it := range s.items {

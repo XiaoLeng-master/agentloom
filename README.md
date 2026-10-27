@@ -47,7 +47,7 @@ agentloom 把这三件事做在同一套平台里，并且**让每一环都咬�
 | **评测 harness** | Trace + 规则代理评测器 + 词法测试 Prober + Markdown 报告；真实 Judge 尚未接入 | 🚧 |
 | **网关治理链** | Filter Chain：本地演示 token、关键词注入信号、单机租户限流 | 🚧 |
 | **插件化运行时** | IoC 生命周期：planner/memory/tool/evaluator 可热插拔，mount/reload/dispose 不重置 agent 状态 | ✅ |
-| **后端底座** | 可选 Redis 持久化演示 Trace；内存队列、按月分组及内存缓存；Kafka、etcd、Milvus 与 DLQ 尚未接入 | 🚧 |
+| **后端底座** | 可选 Redis 持久化演示 Trace；内存队列、按月分组。Embed 与补全缓存默认 L1 LRU，设置 `AGENTLOOM_REDIS_ADDR` 后才用 Redis 作 L2，见 `docs/11-multilevel-cache.md`。Kafka、etcd、Milvus 与 DLQ 尚未接入 | 🚧 |
 
 > ✅ = 已实现且有测试 / 🚧 = 组件就位，运行时串联推进中 / 📋 = 设计完成待实现
 
@@ -60,6 +60,7 @@ git clone https://github.com/XiaoLeng-master/agentloom.git
 cd agentloom
 make verify      # 格式整理 + vet + 全量 race 测试
 make bench       # 输出当前提交的切分策略 HitRate@K 对比表
+make cachebench  # 同一批请求在接入缓存前后的 embed / LLM 调用次数
 make run         # 启动 HTTP 入口 agentd，监听 :8080
 go run ./cmd/evolve # 离线运行 fixed→recursive 检索复测，输出逐条结果和配置版本
 curl localhost:8080/health   # {"status":"ok","agents":["kb-agent"]}
