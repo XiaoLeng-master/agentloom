@@ -88,7 +88,7 @@ make loop
 # JSON：go run ./cmd/loop -json
 ```
 
-`make loop` 与 `POST /v1/evolve` 绑定 `datasets/rag_eval_98.json`。两者都用确定性本地替身（不调用外部 LLM）对每条样本检索并渲染回答，不经过 Chat 运行时。失败按模拟调用记录归因：期望来源未命中，或来源命中但检索上下文没有 ground truth，归检索层；tool error / unknown tool / max iterations 归工具层；只有上下文含有 ground truth 而渲染回答没有时归 Prompt 层。优化任务写成结构化记录（层、原因、候选配置、预测区间）。预测区间是失败占比乘固定系数，不是校准后的置信区间。公开基线上工具策略一直是 search，工具层失败数为 0，那三类信号由单元测试覆盖。
+`make loop` 与 `POST /v1/evolve` 绑定工作区里的 `datasets/rag_eval_98.json` 和它点名的源文件，改 README 或这些源文件会改变这次命令的哈希。`TestClosedLoopPublic98` 不读工作区，它读 `datasets/rag_eval_98_snapshot.json` 里那次测量时保存的固定快照，所以后来的文档改动不会让这个测试失败。两者都用确定性本地替身（不调用外部 LLM）对每条样本检索并渲染回答，不经过 Chat 运行时。失败按模拟调用记录归因：期望来源未命中，或来源命中但检索上下文没有 ground truth，归检索层；tool error / unknown tool / max iterations 归工具层；只有上下文含有 ground truth 而渲染回答没有时归 Prompt 层。优化任务写成结构化记录（层、原因、候选配置、预测区间）。预测区间是失败占比乘固定系数，不是校准后的置信区间。公开基线上工具策略一直是 search，工具层失败数为 0，那三类信号由单元测试覆盖。
 
 当前提交实测（`go run ./cmd/loop`，语料哈希 `65135211c07420203ee0da76f4762432c9ae196bd258a477a4398384471d3ebb`）：基线 fixed / echo / top-3，来源命中 0.1939，词法代理 0.4402，引用失败 79，归因失败 98（来源未命中 79，上下文缺少 ground truth 19，Prompt 0，工具 0）。recursive 来源命中 +0.1531，预测命中，但词法代理下降，门禁拒绝。semantic 来源命中 −0.0204，预测未命中，门禁拒绝。parent-child 来源命中 −0.0204，预测未命中，门禁拒绝。retrieval-topk 把 TopK 提到 5，来源命中 +0.1122（到 0.3061），预测命中，词法代理与基线相同，引用失败 79→68，归因失败数仍是 98，门禁通过并进入 10% 灰度。灰度配置版本是 2，稳定配置仍是版本 1。这不是生成答案变正确，也没有减少归因失败。
 

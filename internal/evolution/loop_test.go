@@ -312,8 +312,9 @@ func TestSecondLoopMeasuresPromotedPolicy(t *testing.T) {
 }
 
 func TestClosedLoopPublic98(t *testing.T) {
-	chdirRepoRoot(t)
-	cases, docs, hash, err := LoadPublicCorpus(PublicDatasetPath)
+	snap := snapshotPath(t)
+	chdirAwayFromRepo(t)
+	cases, docs, hash, err := LoadFrozenCorpus(snap)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -330,7 +331,7 @@ func TestClosedLoopPublic98(t *testing.T) {
 		}
 		ids[c.ID] = true
 	}
-	_, _, hashAgain, err := LoadPublicCorpus(PublicDatasetPath)
+	_, _, hashAgain, err := LoadFrozenCorpus(snap)
 	if err != nil || hashAgain != hash || hash == "" {
 		t.Fatalf("hash=%s again=%s err=%v", hash, hashAgain, err)
 	}
@@ -507,6 +508,33 @@ func TestClosedLoopPublic98(t *testing.T) {
 	if !strings.Contains(md, "98") || !strings.Contains(md, "门禁") {
 		t.Fatalf("markdown missing summary:\n%s", clipText(md, 400))
 	}
+}
+
+func snapshotPath(t *testing.T) string {
+	t.Helper()
+	return filepath.Join(repoRoot(t), PublicSnapshotPath)
+}
+
+// chdirAwayFromRepo leaves a fake README in the working directory. The locked
+// test must still read the snapshot rather than this file.
+func chdirAwayFromRepo(t *testing.T) {
+	t.Helper()
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmp := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmp, "README.md"), []byte("this live readme must not enter the locked corpus"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(tmp); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(wd); err != nil {
+			t.Errorf("restore wd: %v", err)
+		}
+	})
 }
 
 func near(t *testing.T, got, want float64) {

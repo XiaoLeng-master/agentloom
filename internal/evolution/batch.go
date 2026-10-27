@@ -14,6 +14,10 @@ import (
 const (
 	// PublicDatasetPath is the fixed regression set bound by the closed loop.
 	PublicDatasetPath = "datasets/rag_eval_98.json"
+	// PublicSnapshotPath is a frozen copy of that set and the files it referenced
+	// when the regression numbers were measured. Tests load this file so later
+	// edits to README or docs do not move the locked hash.
+	PublicSnapshotPath = "datasets/rag_eval_98_snapshot.json"
 	// PublicDatasetSize is the number of cases in that set.
 	PublicDatasetSize = 98
 
