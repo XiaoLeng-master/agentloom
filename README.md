@@ -38,14 +38,14 @@ agentloom 把这三件事做在同一套平台里，并且**让每一环都咬�
 
 | 特性 | 说明 | 状态 |
 |---|---|---|
-| **多 Agent 分层协作** | Planner / Executor / Verifier 角色池与消息契约；子任务当前串行执行 | ✅ |
+| **多 Agent 分层协作** | Planner / Executor / Verifier 角色池与消息契约。每个回合的 Executor 子任务有 worker 数上限，并共用全局 + 按 Agent 名称的并发信号量（每回合一组 goroutine 加共享信号量，不是进程级固定池，也不是令牌桶）。超额排队，context 取消或超时计为拒绝；首个执行错误会取消同回合其余子任务。结果按子任务顺序汇总。`ConcurrencyStats()` 只在进程内查询并发、排队和拒绝，没有单独的 HTTP 字段。本地演示的 Planner 固定只产出 1 个子任务，并发上限以 `cmd/quotabench` 为准，见 [`docs/08-concurrency-quota.md`](docs/08-concurrency-quota.md) | ✅ |
 | **Harness 自进化闭环** | 可手动触发同语料检索复测、确定性质量代理、引用失败统计、预测检验、门禁、本地配置生效与实验历史读回；真实 LLM Judge、Trace 驱动批评测及自动回滚仍未完成 | 🚧 |
 | **预测式归因** | 每次优化提交声明预期收益，评测验证预测成立与否，逐次变更可归因 | 📋 |
 | **配置热更新** | 进程内引用计数替换；etcd Source 尚未实现 | ✅ |
 | **MCP 双传输适配** | stdio / HTTP JSON-RPC；请求取消、响应关联校验与有限 JSON Schema 参数校验；写工具默认不重试 | 🚧 |
 | **可评测 RAG** | 4 种切分策略可插拔 + 自建 98 条标注评估集，HitRate@K 可一键复现 | ✅ |
 | **评测 harness** | Trace + 规则代理评测器 + 词法测试 Prober + Markdown 报告；真实 Judge 尚未接入 | 🚧 |
-| **网关治理链** | Filter Chain：本地演示 token、关键词注入信号、单机租户限流 | 🚧 |
+| **网关治理链** | 认证在 AccessPolicy，不在 Filter Chain。不设置 `AGENTLOOM_PUBLIC_MODE` 时 Chat、Trace 和只读 Benchmark 可直接访问，`POST /v1/evolve` 使用进程内固定令牌 `local-demo`，本地模式不读取 `AGENTLOOM_ADMIN_TOKEN`。公开模式才应用该变量和可选的 `AGENTLOOM_PUBLIC_TOKEN`。Filter Chain 是注入检测，以及按来源地址的滑动窗口（默认每分钟 60 次，超额立即拒绝）。`/v1/chat` 的在途请求只经过一道并发准入：全局默认 4，同一来源默认 4，超额排队，请求 context 结束返回 429。`AGENTLOOM_CHAT_GLOBAL` 与 `AGENTLOOM_CHAT_PER_SOURCE` 可覆盖。Executor 的两级信号量是另一套计数。见 [`docs/07-public-demo.md`](docs/07-public-demo.md) 与 [`docs/08-concurrency-quota.md`](docs/08-concurrency-quota.md) | 🚧 |
 | **插件化运行时** | IoC 生命周期：planner/memory/tool/evaluator 可热插拔，mount/reload/dispose 不重置 agent 状态 | ✅ |
 | **后端底座** | 可选 Redis 持久化演示 Trace；内存队列、按月分组及内存缓存；Kafka、etcd、Milvus 与 DLQ 尚未接入 | 🚧 |
 
@@ -106,9 +106,10 @@ agentloom/
 │   ├── mcp/                      # stdio/http transport、tool adapter
 │   ├── rag/                      # splitter(4 策略)、embedding、store、retriever
 │   ├── eval/                     # trace、evaluator、geval、report
-│   ├── gateway/                  # filter chain（认证/注入检测/限流）
+│   ├── gateway/                  # 注入检测、按来源滑动窗口、全局+来源在途准入
 │   ├── runtime/plugin/           # IoC 插件生命周期（mount/reload/dispose）
-│   ├── orchestrator/             # 多 Agent 池（planner/executor/verifier + 消息契约）
+│   ├── orchestrator/             # 多 Agent 池、有界 worker pool、两级并发配额
+│   ├── quota/                    # 全局 + 按 key 的并发信号量（排队、超时拒绝、计数）
 │   └── infra/                    # 削峰队列、按月分表、prefix/embed 缓存
 ├── datasets/rag_eval_98.json     # 自建 98 条标注评估集（公开来源）
 ├── scripts/                      # bench.sh 与数据集构造脚本

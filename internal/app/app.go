@@ -20,6 +20,7 @@ import (
 	"github.com/XiaoLeng-master/agentloom/internal/gateway"
 	"github.com/XiaoLeng-master/agentloom/internal/infra"
 	"github.com/XiaoLeng-master/agentloom/internal/orchestrator"
+	"github.com/XiaoLeng-master/agentloom/internal/quota"
 	"github.com/XiaoLeng-master/agentloom/internal/rag"
 )
 
@@ -48,21 +49,31 @@ type retrievalLog struct {
 }
 type retrievalKey struct{}
 type App struct {
-	gate       *gateway.Gateway
-	runtime    *orchestrator.Orchestrator
-	mu         sync.RWMutex
-	traces     map[string]Trace
-	store      TraceStore
-	queue      *infra.ToyQueue
-	worker     chan struct{}
-	failed     atomic.Int64
-	modelMode  bool
-	manager    *config.Manager
-	corpusPath string
-	history    *evolution.History
-	access     AccessPolicy
-	chatSlots  chan struct{}
+	gate          *gateway.Gateway
+	runtime       *orchestrator.Orchestrator
+	mu            sync.RWMutex
+	traces        map[string]Trace
+	store         TraceStore
+	queue         *infra.ToyQueue
+	worker        chan struct{}
+	failed        atomic.Int64
+	modelMode     bool
+	manager       *config.Manager
+	corpusPath    string
+	history       *evolution.History
+	access        AccessPolicy
+	chatGlobal    int
+	chatPerSource int
 }
+
+const (
+	// DefaultChatGlobal is the in-flight cap shared by every /v1/chat caller.
+	// It replaces the previous 4-slot channel.
+	DefaultChatGlobal = 4
+	// DefaultChatPerSource is the in-flight cap for one source address.
+	// It matches the global default, so one source can still use every slot.
+	DefaultChatPerSource = 4
+)
 
 // WithConfigManager makes each request acquire one immutable configuration version.
 func (a *App) WithConfigManager(manager *config.Manager) *App { a.manager = manager; return a }
@@ -70,12 +81,45 @@ func (a *App) WithConfigManager(manager *config.Manager) *App { a.manager = mana
 // WithAccessPolicy configures public and administrative HTTP boundaries.
 func (a *App) WithAccessPolicy(policy AccessPolicy) *App { a.access = policy; return a }
 
-// WithMaxConcurrentChats bounds downstream request amplification.
+// WithMaxConcurrentChats sets the global in-flight cap for /v1/chat and keeps
+// the current per-source cap. limit <= 0 selects DefaultChatGlobal.
 func (a *App) WithMaxConcurrentChats(limit int) *App {
-	if limit > 0 {
-		a.chatSlots = make(chan struct{}, limit)
+	per := a.chatPerSource
+	if per < 1 {
+		per = DefaultChatPerSource
 	}
+	a.installChatQuota(limit, per)
 	return a
+}
+
+// WithChatQuota sets the only /v1/chat in-flight gate: a global semaphore and
+// a per-source semaphore. Values <= 0 select the defaults. Excess requests
+// queue until the request context ends.
+func (a *App) WithChatQuota(global, perSource int) *App {
+	a.installChatQuota(global, perSource)
+	return a
+}
+
+func (a *App) installChatQuota(global, perSource int) {
+	if global < 1 {
+		global = DefaultChatGlobal
+	}
+	if perSource < 1 {
+		perSource = DefaultChatPerSource
+	}
+	a.chatGlobal = global
+	a.chatPerSource = perSource
+	if a.gate != nil {
+		a.gate.SetAdmission(gateway.NewConcurrencyAdmission(global, perSource))
+	}
+}
+
+// ChatAdmissionStats returns the /v1/chat in-flight gauges.
+func (a *App) ChatAdmissionStats() quota.Stats {
+	if a.gate == nil || a.gate.Admission() == nil {
+		return quota.Stats{}
+	}
+	return a.gate.Admission().Stats()
 }
 
 // WithCorpusPath locates the public evaluation set for an offline experiment.
@@ -143,7 +187,9 @@ func NewWithModels(docs []rag.Document, models map[string]core.LLMClient) *App {
 	runtime.AddAgent(orchestrator.RolePlanner, core.NewAgent("planner", "Return a JSON array of subtasks with id and input fields. No markdown.", selectModel("planner"), nil, 1))
 	runtime.AddAgent(orchestrator.RoleExecutor, core.NewAgent("executor", "Use search_docs once for relevant evidence. Answer the full user question concisely, cite source paths, and distinguish target architecture from implemented behavior. If evidence is insufficient, say so.", selectModel("executor"), []core.Tool{searchTool{retrievers}}, 2))
 	runtime.AddAgent(orchestrator.RoleVerifier, core.NewAgent("verifier", "Return JSON with task_id and pass fields. Check the execution result. No markdown.", demoLLM{role: "verifier"}, nil, 1))
-	return &App{gate: gateway.New(gateway.InjectionFilter{}, gateway.NewRateLimitFilter(60, time.Minute)), runtime: runtime, traces: map[string]Trace{}, modelMode: models != nil, access: localAccessPolicy(), chatSlots: make(chan struct{}, 4)}
+	app := &App{gate: gateway.New(gateway.InjectionFilter{}, gateway.NewRateLimitFilter(60, time.Minute)), runtime: runtime, traces: map[string]Trace{}, modelMode: models != nil, access: localAccessPolicy()}
+	app.installChatQuota(DefaultChatGlobal, DefaultChatPerSource)
+	return app
 }
 
 func (a *App) Handler() http.Handler {
@@ -271,13 +317,6 @@ func (a *App) chat(w http.ResponseWriter, r *http.Request) {
 		write(w, 403, map[string]string{"error": "invalid token"})
 		return
 	}
-	select {
-	case a.chatSlots <- struct{}{}:
-		defer func() { <-a.chatSlots }()
-	default:
-		write(w, http.StatusTooManyRequests, map[string]string{"error": "chat concurrency limit reached"})
-		return
-	}
 	var input struct {
 		Message string `json:"message"`
 	}
@@ -285,11 +324,18 @@ func (a *App) chat(w http.ResponseWriter, r *http.Request) {
 		write(w, 400, map[string]string{"error": "message required"})
 		return
 	}
-	ok, filter, reason := a.gate.Allow(r.Context(), gateway.Request{Tenant: requestTenant(r), Prompt: input.Message, AgentName: "demo"})
-	if !ok {
-		write(w, 403, map[string]string{"error": filter + ": " + reason})
+	// One in-flight gate: global slots plus a per-source semaphore. The
+	// sliding-window filter inside Admit still counts requests per source.
+	release, filter, reason := a.gate.Admit(r.Context(), gateway.Request{Tenant: requestTenant(r), Prompt: input.Message, AgentName: "demo"})
+	if release == nil {
+		code := http.StatusForbidden
+		if filter == "concurrency" {
+			code = http.StatusTooManyRequests
+		}
+		write(w, code, map[string]string{"error": filter + ": " + reason})
 		return
 	}
+	defer release()
 	ctx := r.Context()
 	retrievals := &retrievalLog{}
 	ctx = context.WithValue(ctx, retrievalKey{}, retrievals)

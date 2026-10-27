@@ -10,10 +10,12 @@ import (
 	"encoding/json"
 	"flag"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -79,8 +81,9 @@ func main() {
 	}
 	local := app.NewWithModels(docs, models)
 	local.WithConfigManager(mgr).WithExperimentHistory(".agentloom/evolutions")
+	local.WithChatQuota(positiveIntEnv("AGENTLOOM_CHAT_GLOBAL", app.DefaultChatGlobal), positiveIntEnv("AGENTLOOM_CHAT_PER_SOURCE", app.DefaultChatPerSource))
 	if publicMode {
-		local.WithAccessPolicy(app.AccessPolicy{PublicMode: true, PublicToken: publicToken, AdminToken: adminToken}).WithMaxConcurrentChats(4)
+		local.WithAccessPolicy(app.AccessPolicy{PublicMode: true, PublicToken: publicToken, AdminToken: adminToken})
 	}
 	if redisAddr := os.Getenv("AGENTLOOM_REDIS_ADDR"); redisAddr != "" {
 		store := app.NewRedisTraceStore(redisAddr, 24*time.Hour)
@@ -103,7 +106,14 @@ func main() {
 	})
 	mux.Handle("/", web.Handler())
 
-	srv := &http.Server{Addr: *addr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
+	base, stopBase := context.WithCancel(context.Background())
+	defer stopBase()
+	srv := &http.Server{
+		Addr:              *addr,
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+		BaseContext:       func(net.Listener) context.Context { return base },
+	}
 	go func() {
 		log.Printf("agentloom listening on %s (agents: %v)", *addr, mgr.Active())
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -115,9 +125,22 @@ func main() {
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 	<-stop
 	log.Println("shutting down...")
+	stopBase()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = srv.Shutdown(ctx)
+}
+
+func positiveIntEnv(name string, fallback int) int {
+	raw := os.Getenv(name)
+	if raw == "" {
+		return fallback
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 1 {
+		log.Fatalf("%s must be a positive integer", name)
+	}
+	return n
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {

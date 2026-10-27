@@ -5,9 +5,12 @@
 // It is deliberately a thin layer on top of internal/core: every pool member
 // is a *core.Agent (the ReAct loop), and the orchestrator only owns (1) the
 // routing (round-robin within a role for horizontal scale), (2) the message
-// contract that flows between roles, and (3) the re-plan loop when a Verifier
-// rejects an executor's output. The trace it returns is the surface the eval
-// harness consumes to replay a turn.
+// contract that flows between roles, (3) the re-plan loop when a Verifier
+// rejects an executor's output, and (4) a bounded worker pool plus a two-level
+// concurrency quota (global and per executor Agent) so one user turn cannot
+// fan out into an unbounded number of executor calls. The trace it returns is
+// the surface the eval harness consumes to replay a turn. Executor contracts
+// are appended in subtask order, not completion order.
 package orchestrator
 
 import (
@@ -19,6 +22,7 @@ import (
 	"sync/atomic"
 
 	"github.com/XiaoLeng-master/agentloom/internal/core"
+	"github.com/XiaoLeng-master/agentloom/internal/quota"
 )
 
 // Role is the capability bucket an Agent plays in a collaboration. The three
@@ -111,6 +115,15 @@ type Orchestrator struct {
 	mu        sync.Mutex
 	pools     map[Role]*Pool
 	maxReplan int
+
+	// concMu guards the worker-pool size and the shared two-level limiter.
+	// The limiter itself is safe for concurrent Acquire/Release.
+	concMu        sync.RWMutex
+	workers       int
+	globalLimit   int
+	perAgentLimit int
+	limiter       *quota.Limiter
+	running       int
 }
 
 // NewOrchestrator returns an empty Orchestrator. maxReplan caps how many
@@ -119,7 +132,11 @@ func NewOrchestrator(maxReplan int) *Orchestrator {
 	if maxReplan <= 0 {
 		maxReplan = 2
 	}
-	return &Orchestrator{pools: make(map[Role]*Pool), maxReplan: maxReplan}
+	o := &Orchestrator{pools: make(map[Role]*Pool), maxReplan: maxReplan}
+	if err := o.SetConcurrency(ConcurrencyConfig{}); err != nil {
+		panic(err)
+	}
+	return o
 }
 
 // AddAgent adds a to role's pool. Safe to call concurrently with Run.
@@ -168,11 +185,23 @@ func (o *Orchestrator) pickRole(role Role) *core.Agent {
 //
 // Flow:
 //  1. Planner.Run(userQuery) → JSON []SubTask (or a single fallback task)
-//  2. For each SubTask, Executor.Run(input) → ExecResult
-//  3. Verifier.Run(ExecResult) → Verdict (skipped if no verifier mounted)
+//  2. Executor subtasks run concurrently in a bounded worker pool. Each call
+//     waits for the global and per-Agent semaphores; excess tasks queue until
+//     ctx ends (counted as a rejection). Results are joined by task order.
+//  3. Verifier.Run(ExecResult) → Verdict, still in task order and fail-closed
+//     (skipped if no verifier mounted)
 //  4. If any Verdict.Pass is false and replans remain, Planner.Run(feedback)
 //     re-plans; otherwise the turn ends with whatever passed.
 func (o *Orchestrator) Run(ctx context.Context, userQuery string) (string, []Contract, error) {
+	o.concMu.Lock()
+	o.running++
+	workers, lim := o.workers, o.limiter
+	o.concMu.Unlock()
+	defer func() {
+		o.concMu.Lock()
+		o.running--
+		o.concMu.Unlock()
+	}()
 	var trace []Contract
 	subtasks, planPayload, err := o.plan(ctx, o.pickRole(RolePlanner), userQuery)
 	if err != nil {
@@ -182,17 +211,27 @@ func (o *Orchestrator) Run(ctx context.Context, userQuery string) (string, []Con
 
 	results := make(map[string]string, len(subtasks))
 	for replan := 0; replan <= o.maxReplan; replan++ {
+		outcomes := o.executeSubtasks(ctx, workers, lim, subtasks)
+		if i, failed := firstExecError(outcomes); failed {
+			for j := range outcomes {
+				payload := outcomes[j].output
+				if outcomes[j].err != nil {
+					payload = outcomes[j].err.Error()
+				} else {
+					results[subtasks[j].ID] = outcomes[j].output
+				}
+				trace = append(trace, Contract{
+					From: RoleExecutor, To: RoleVerifier, TaskID: subtasks[j].ID,
+					Phase: PhaseExecute, Payload: payload,
+				})
+			}
+			return "", trace, outcomes[i].err
+		}
+
 		allPass := true
 		var verdicts []Verdict
-		for _, st := range subtasks {
-			exec := o.pickRole(RoleExecutor)
-			if exec == nil {
-				return "", trace, ErrNoExecutor
-			}
-			out, err := exec.Run(ctx, st.Input)
-			if err != nil {
-				return "", trace, fmt.Errorf("executor %s: %w", st.ID, err)
-			}
+		for i, st := range subtasks {
+			out := outcomes[i].output
 			results[st.ID] = out
 			trace = append(trace, Contract{From: RoleExecutor, To: RoleVerifier, TaskID: st.ID, Phase: PhaseExecute, Payload: out})
 
@@ -278,4 +317,16 @@ var (
 	ErrNoExecutor      = errors.New("orchestrator: executor pool empty")
 	ErrVerification    = errors.New("orchestrator: verification failed")
 	ErrReplanExhausted = errors.New("orchestrator: replan budget exhausted")
+	// ErrConcurrencyBusy is returned when SetConcurrency runs during Run.
+	// Two limiters at once would let in-flight turns exceed the global cap.
+	ErrConcurrencyBusy = errors.New("orchestrator: SetConcurrency while a turn is running")
 )
+
+func firstExecError(outcomes []execOutcome) (int, bool) {
+	for i, oc := range outcomes {
+		if oc.err != nil {
+			return i, true
+		}
+	}
+	return 0, false
+}
