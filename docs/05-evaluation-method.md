@@ -86,7 +86,7 @@ go test -race ./internal/eval/
 # 详见 docs/roadmap.md
 ```
 
-2026-10-27T09:02:11Z（UTC）执行 `go run ./cmd/bench`（Go 1.22.2，98 条，HashEmbedder，K=3，无付费 API）。测量时父提交是 `933653f`，README 里的同名表与这次输出逐格相同。确定性代理分数是词法 GEval 均值（0–1）。真实回答未评。`docs/05` 不在评估集的 sourceDoc 里。再改 README 或 `docs/03-benchmark.md` 后必须重跑，不能把下表当成固定目标。
+2026-10-27T09:02:11Z（UTC）执行 `go run ./cmd/bench`（Go 1.22.2，98 条，HashEmbedder，K=3，无付费 API）。这组数字写在提交 `f4c58c09d783ce81f230da1356eebbfa62c93d6c`（父提交 `933653f`），README 里的同名表与该次输出逐格相同。确定性代理分数是词法 GEval 均值（0–1）。真实回答未评。`docs/05` 不在评估集的 sourceDoc 里，补上提交哈希不会改表。再改 README 或 `docs/03-benchmark.md` 后必须重跑，不能把下表当成固定目标。
 
 | 切分策略 | 来源命中 HitRate@3 | MRR@3 | 确定性代理分数 | 通过率 | 引用失败 |
 |---|---|---|---|---|---|
