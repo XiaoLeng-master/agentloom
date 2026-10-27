@@ -20,6 +20,7 @@ import (
 	"github.com/XiaoLeng-master/agentloom/internal/app"
 	"github.com/XiaoLeng-master/agentloom/internal/config"
 	"github.com/XiaoLeng-master/agentloom/internal/core"
+	"github.com/XiaoLeng-master/agentloom/internal/infra"
 	"github.com/XiaoLeng-master/agentloom/internal/rag"
 	"github.com/XiaoLeng-master/agentloom/web"
 )
@@ -77,7 +78,17 @@ func main() {
 	if err != nil {
 		log.Fatalf("load public docs: %v", err)
 	}
-	local := app.NewWithModels(docs, models)
+	cacheTTL := 30 * time.Minute
+	if raw := os.Getenv("AGENTLOOM_CACHE_TTL"); raw != "" {
+		parsed, err := time.ParseDuration(raw)
+		if err != nil || parsed < 0 {
+			log.Fatal("AGENTLOOM_CACHE_TTL must be a non-negative duration")
+		}
+		cacheTTL = parsed
+	}
+	embedCache := infra.NewEmbedCacheTTL(4096, cacheTTL)
+	prefixCache := infra.NewPrefixCacheTTL(1024, cacheTTL)
+	local := app.NewWithCaches(docs, models, embedCache, prefixCache)
 	local.WithConfigManager(mgr).WithExperimentHistory(".agentloom/evolutions")
 	if publicMode {
 		local.WithAccessPolicy(app.AccessPolicy{PublicMode: true, PublicToken: publicToken, AdminToken: adminToken}).WithMaxConcurrentChats(4)
@@ -92,6 +103,7 @@ func main() {
 		}
 		defer store.Close()
 		local.WithTraceStore(store)
+		local.UseRedisCache(redisAddr, cacheTTL)
 	}
 	mux.Handle("/v1/", local.Handler())
 	defer local.Close()

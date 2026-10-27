@@ -1,4 +1,4 @@
-.PHONY: run bench eval test verify fmt vet tidy docker-up
+.PHONY: run bench cachebench eval test verify fmt vet tidy docker-up
 
 GO ?= go
 
@@ -7,6 +7,9 @@ run:        ## 启动 HTTP 入口（agentd, :8080）
 
 bench:      ## 跑切分策略 benchmark，输出 HitRate@K 表
 	$(GO) run ./cmd/bench
+
+cachebench: ## 同一批请求的 embed / LLM 调用次数，接入缓存前后
+	$(GO) run ./cmd/cachebench
 
 verify:     ## 一键自证：格式化 + 静态检查 + 全量测试（含 race）
 	$(GO) fmt ./...

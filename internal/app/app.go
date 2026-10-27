@@ -48,20 +48,22 @@ type retrievalLog struct {
 }
 type retrievalKey struct{}
 type App struct {
-	gate       *gateway.Gateway
-	runtime    *orchestrator.Orchestrator
-	mu         sync.RWMutex
-	traces     map[string]Trace
-	store      TraceStore
-	queue      *infra.ToyQueue
-	worker     chan struct{}
-	failed     atomic.Int64
-	modelMode  bool
-	manager    *config.Manager
-	corpusPath string
-	history    *evolution.History
-	access     AccessPolicy
-	chatSlots  chan struct{}
+	gate        *gateway.Gateway
+	runtime     *orchestrator.Orchestrator
+	mu          sync.RWMutex
+	traces      map[string]Trace
+	store       TraceStore
+	queue       *infra.ToyQueue
+	worker      chan struct{}
+	failed      atomic.Int64
+	modelMode   bool
+	manager     *config.Manager
+	corpusPath  string
+	history     *evolution.History
+	access      AccessPolicy
+	chatSlots   chan struct{}
+	embedCache  *infra.EmbedCache
+	prefixCache *infra.PrefixCache
 }
 
 // WithConfigManager makes each request acquire one immutable configuration version.
@@ -127,23 +129,45 @@ func New(docs []rag.Document) *App {
 
 // NewWithModels uses supplied role models, retaining the deterministic demo when nil.
 func NewWithModels(docs []rag.Document, models map[string]core.LLMClient) *App {
+	return NewWithCaches(docs, models, nil, nil)
+}
+
+// NewWithCaches indexes docs through embed and wraps each model with prefix.
+// Nil caches are replaced with an L1 cache that does not expire.
+func NewWithCaches(docs []rag.Document, models map[string]core.LLMClient, embed *infra.EmbedCache, prefix *infra.PrefixCache) *App {
+	if embed == nil {
+		embed = infra.NewEmbedCache()
+	}
+	if prefix == nil {
+		prefix = infra.NewPrefixCache()
+	}
 	retrievers := map[string]*rag.Retriever{}
 	for _, splitter := range []rag.Splitter{rag.FixedSplitter{Size: 40}, rag.RecursiveSplitter{Size: 60, Overlap: 10}} {
-		r := &rag.Retriever{Splitter: splitter, Embedder: rag.HashEmbedder{DimV: 512}, Store: &rag.MemoryStore{}}
+		r := &rag.Retriever{Splitter: splitter, Embedder: rag.HashEmbedder{DimV: 512}, Store: &rag.MemoryStore{}, Cache: embed}
 		r.Index(docs)
 		retrievers[splitter.Name()] = r
 	}
 	selectModel := func(role string) core.LLMClient {
+		var inner core.LLMClient = demoLLM{role: role}
 		if models != nil && models[role] != nil {
-			return models[role]
+			inner = models[role]
 		}
-		return demoLLM{role: role}
+		return core.NewCachedLLM(inner, prefix)
 	}
 	runtime := orchestrator.NewOrchestrator(1)
 	runtime.AddAgent(orchestrator.RolePlanner, core.NewAgent("planner", "Return a JSON array of subtasks with id and input fields. No markdown.", selectModel("planner"), nil, 1))
 	runtime.AddAgent(orchestrator.RoleExecutor, core.NewAgent("executor", "Use search_docs once for relevant evidence. Answer the full user question concisely, cite source paths, and distinguish target architecture from implemented behavior. If evidence is insufficient, say so.", selectModel("executor"), []core.Tool{searchTool{retrievers}}, 2))
-	runtime.AddAgent(orchestrator.RoleVerifier, core.NewAgent("verifier", "Return JSON with task_id and pass fields. Check the execution result. No markdown.", demoLLM{role: "verifier"}, nil, 1))
-	return &App{gate: gateway.New(gateway.InjectionFilter{}, gateway.NewRateLimitFilter(60, time.Minute)), runtime: runtime, traces: map[string]Trace{}, modelMode: models != nil, access: localAccessPolicy(), chatSlots: make(chan struct{}, 4)}
+	runtime.AddAgent(orchestrator.RoleVerifier, core.NewAgent("verifier", "Return JSON with task_id and pass fields. Check the execution result. No markdown.", core.NewCachedLLM(demoLLM{role: "verifier"}, prefix), nil, 1))
+	return &App{gate: gateway.New(gateway.InjectionFilter{}, gateway.NewRateLimitFilter(60, time.Minute)), runtime: runtime, traces: map[string]Trace{}, modelMode: models != nil, access: localAccessPolicy(), chatSlots: make(chan struct{}, 4), embedCache: embed, prefixCache: prefix}
+}
+
+// UseRedisCache turns on L2 for embed and prefix caches. Empty addr is a no-op.
+func (a *App) UseRedisCache(addr string, ttl time.Duration) {
+	if addr == "" {
+		return
+	}
+	a.embedCache.UseRedis(addr, ttl)
+	a.prefixCache.UseRedis(addr, ttl)
 }
 
 func (a *App) Handler() http.Handler {
@@ -152,6 +176,7 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/traces/{id}", a.trace)
 	mux.HandleFunc("POST /v1/evolve", a.evolve)
 	mux.HandleFunc("GET /v1/bench", a.bench)
+	mux.HandleFunc("GET /v1/metrics", a.metrics)
 	mux.HandleFunc("GET /v1/evolutions", a.evolutions)
 	mux.HandleFunc("GET /v1/evolutions/{id}", a.experiment)
 	mux.HandleFunc("GET /health/live", func(w http.ResponseWriter, r *http.Request) { write(w, 200, map[string]string{"status": "ok"}) })
@@ -175,7 +200,22 @@ func (a *App) bench(w http.ResponseWriter, r *http.Request) {
 	before := evolution.RunRetrieval(cases, docs, hash, rag.FixedSplitter{Size: 40})
 	after := evolution.RunRetrieval(cases, docs, hash, rag.RecursiveSplitter{Size: 60, Overlap: 10})
 	write(w, 200, map[string]any{"before": before, "after": after, "failures": evolution.DiagnoseRetrieval(before, after),
-		"actual_delta": after.HitRate - before.HitRate, "answer_quality": "not_evaluated"})
+		"actual_delta": after.HitRate - before.HitRate, "answer_quality": "not_evaluated", "cache": a.cacheReport()})
+}
+
+func (a *App) metrics(w http.ResponseWriter, r *http.Request) {
+	if !a.access.publicAllowed(r) {
+		write(w, 403, map[string]string{"error": "invalid token"})
+		return
+	}
+	write(w, 200, a.cacheReport())
+}
+
+func (a *App) cacheReport() map[string]any {
+	if a.embedCache == nil || a.prefixCache == nil {
+		return map[string]any{}
+	}
+	return map[string]any{"embed": a.embedCache.Levels(), "prefix": a.prefixCache.Levels()}
 }
 
 func (a *App) evolve(w http.ResponseWriter, r *http.Request) {

@@ -1,8 +1,6 @@
 package rag
 
-import (
-	"testing"
-)
+import "testing"
 
 func TestFourSplittersProduceChunks(t *testing.T) {
 	doc := Document{Source: "d", Text: "ReAct loop runs. Think then act. Observe the result. Then think again."}
@@ -55,6 +53,81 @@ func TestRetrieverReturnsRelevant(t *testing.T) {
 		t.Fatalf("top hit should be go doc, got %q (score=%.3f)", got[0].Source, got[0].Score)
 	}
 }
+
+type countingEmbedder struct {
+	inner Embedder
+	texts []string
+}
+
+func (c *countingEmbedder) Dim() int { return c.inner.Dim() }
+func (c *countingEmbedder) Embed(text string) []float32 {
+	c.texts = append(c.texts, text)
+	return c.inner.Embed(text)
+}
+
+func TestSyncReembedsOnlyChangedDocument(t *testing.T) {
+	embedder := &countingEmbedder{inner: HashEmbedder{DimV: 64}}
+	cache := &mapCache{items: map[string][]float32{}}
+	r := &Retriever{
+		Splitter: FixedSplitter{Size: 20},
+		Embedder: embedder,
+		Store:    &MemoryStore{},
+		Cache:    cache,
+	}
+	alpha := Document{Source: "alpha", Text: "alpha react loop think act observe"}
+	beta := Document{Source: "beta", Text: "beta redis ttl lru memory vector"}
+	r.Sync([]Document{alpha})
+	alphaChunks := append([]string(nil), embedder.texts...)
+	embedder.texts = nil
+	r.Sync([]Document{alpha, beta})
+	betaChunks := append([]string(nil), embedder.texts...)
+	if len(betaChunks) == 0 {
+		t.Fatal("beta was not embedded on first sight")
+	}
+	embedder.texts = nil
+	alpha.Text = "zzzz changed alpha document only"
+	events := r.Sync([]Document{alpha, beta})
+	if len(embedder.texts) == 0 {
+		t.Fatal("changed document was not embedded")
+	}
+	for _, text := range embedder.texts {
+		for _, old := range betaChunks {
+			if text == old {
+				t.Fatalf("unchanged beta chunk embedded again: %q", text)
+			}
+		}
+	}
+	got := map[string]string{}
+	for _, event := range events {
+		got[event.Source] = event.Action
+	}
+	if got["alpha"] != EventUpdated || got["beta"] != EventUnchanged {
+		t.Fatalf("events=%v", got)
+	}
+	for _, text := range betaChunks {
+		if _, ok := cache.Get(text); !ok {
+			t.Fatalf("unchanged chunk missing from cache: %q", text)
+		}
+	}
+	for _, text := range alphaChunks {
+		if _, ok := cache.Get(text); ok {
+			t.Fatalf("old alpha chunk still cached: %q", text)
+		}
+	}
+	hits := r.Retrieve("beta redis", 1)
+	if len(hits) == 0 || hits[0].Source != "beta" {
+		t.Fatalf("beta should still be searchable, hits=%v", hits)
+	}
+}
+
+type mapCache struct{ items map[string][]float32 }
+
+func (m *mapCache) Get(text string) ([]float32, bool) {
+	v, ok := m.items[text]
+	return v, ok
+}
+func (m *mapCache) Set(text string, vec []float32) { m.items[text] = append([]float32(nil), vec...) }
+func (m *mapCache) Invalidate(text string)         { delete(m.items, text) }
 
 func TestRetrieverDedupesParentChild(t *testing.T) {
 	r := &Retriever{
