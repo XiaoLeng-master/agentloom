@@ -20,7 +20,7 @@ Embed 则把 `EmbedCache` 接进 `rag.Retriever`。相同文本命中后不再�
 go run ./cmd/cachebench
 ```
 
-环境：Go 1.22.2 linux/amd64，2026-10-27T09:09:56Z（UTC），父提交 `2291d87`。没有设置 Redis，没有调用付费 API。Embedder 是 `HashEmbedder`（Dim 128）。LLM 是进程内计数器。批次是 2 篇文档、2 条查询、重复 2 遍，外加 4 次完全相同的消息列表。
+环境：Go 1.22.2 linux/amd64，2026-10-27T09:09:56Z（UTC）。这组数字对应提交 `048acd751eb9c671077c9e6d8a9b08083f27d2e9`（父提交 `2291d87`）。没有设置 Redis，没有调用付费 API。Embedder 是 `HashEmbedder`（Dim 128）。LLM 是进程内计数器。批次是 2 篇文档、2 条查询、重复 2 遍，外加 4 次完全相同的消息列表。
 
 | 项目 | 不接缓存 | 接上 L1 后 |
 |---|---|---|
