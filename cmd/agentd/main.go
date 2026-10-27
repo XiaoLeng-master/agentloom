@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -40,16 +41,21 @@ func publicDocs(root string) ([]rag.Document, error) {
 func main() {
 	addr := flag.String("addr", ":8080", "listen address")
 	flag.Parse()
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
 
-	// Seed one agent so the hot-reload manager is exercised from boot.
-	mgr := config.NewManager()
-	mgr.Register("kb-agent", config.Config{
-		Name:          "kb-agent",
-		SystemPrompt:  "You are a knowledge-base assistant.",
-		Model:         "qwen2.5",
-		MaxIter:       10,
-		ChunkStrategy: "fixed",
-	})
+	mgr, etcdSource, err := openConfig(ctx, os.Getenv)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if etcdSource != nil {
+		defer etcdSource.Close()
+		go func() {
+			if err := etcdSource.Watch(ctx, mgr); err != nil && ctx.Err() == nil {
+				log.Fatalf("etcd watch: %v", err)
+			}
+		}()
+	}
 
 	mux := http.NewServeMux()
 	publicMode := os.Getenv("AGENTLOOM_PUBLIC_MODE") == "1"
@@ -111,13 +117,50 @@ func main() {
 		}
 	}()
 
-	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
-	<-stop
+	<-ctx.Done()
 	log.Println("shutting down...")
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = srv.Shutdown(ctx)
+}
+
+func openConfig(ctx context.Context, getenv func(string) string) (*config.Manager, *config.EtcdSource, error) {
+	mgr := config.NewManager()
+	mgr.Register("kb-agent", config.Config{
+		Name:          "kb-agent",
+		SystemPrompt:  "You are a knowledge-base assistant.",
+		Model:         "qwen2.5",
+		MaxIter:       10,
+		ChunkStrategy: "fixed",
+	})
+	opts, enabled, err := config.OptionsFromEnv(getenv)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !enabled {
+		log.Print("config source: memory")
+		return mgr, nil, nil
+	}
+	src, err := config.DialEtcd(ctx, opts)
+	if err != nil {
+		return nil, nil, err
+	}
+	src.OnApply = func(applied config.Applied) {
+		log.Printf("etcd applied kind=%s agent=%s version=%d percent=%d draining=%d drain_left=%d", applied.Kind, applied.Name, applied.Version, applied.Percent, applied.Draining, applied.DrainLeft)
+	}
+	src.OnError = func(err error) {
+		log.Printf("etcd apply: %v", err)
+	}
+	if err := src.Sync(ctx, mgr); err != nil {
+		_ = src.Close()
+		return nil, nil, err
+	}
+	prefix := opts.Prefix
+	if strings.TrimSpace(prefix) == "" {
+		prefix = "/agentloom/agents/"
+	}
+	log.Printf("config source: etcd endpoints=%s prefix=%s", strings.Join(opts.Endpoints, ","), prefix)
+	return mgr, src, nil
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {

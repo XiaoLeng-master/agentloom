@@ -2,7 +2,7 @@
 
 > 4 类评测器怎么算分、HitRate@K 怎么算、门禁怎么卡。
 
-> **实现边界**：`make loop` 与 `POST /v1/evolve` 在固定 98 条上做离线复测。来源命中看期望文档是否出现在 Top-K。`deterministic_proxy` 把首个检索片段当作代理答案，用词法 Prober 相对 groundTruth 打分，并统计引用是否覆盖期望来源。渲染回答里的事实覆盖只用于归因，不用于晋升。三项都不是模型生成的答案质量，也不是 LLM Judge 或 claim-level faithfulness。`GET /v1/bench` 仍是只读的 fixed/recursive 来源命中预览，`answer_quality` 为 `not_evaluated`。门禁通过后候选进入进程内灰度，观测回落会自动回滚，稳定则逐步放到 100%。`make canary` 复现的是命令给定窗口，不是这条 98 条链路的在线灰度。etcd 灰度源仍未实现。具体数字以该提交的 `make loop` 输出为准。
+> **实现边界**：`make loop` 与 `POST /v1/evolve` 在固定 98 条上做离线复测。来源命中看期望文档是否出现在 Top-K。`deterministic_proxy` 把首个检索片段当作代理答案，用词法 Prober 相对 groundTruth 打分，并统计引用是否覆盖期望来源。渲染回答里的事实覆盖只用于归因，不用于晋升。三项都不是模型生成的答案质量，也不是 LLM Judge 或 claim-level faithfulness。`GET /v1/bench` 仍是只读的 fixed/recursive 来源命中预览，`answer_quality` 为 `not_evaluated`。门禁通过后候选进入进程内灰度，观测回落会自动回滚，稳定则逐步放到 100%。`make canary` 复现的是命令给定窗口，不是这条 98 条链路的在线灰度。etcd 是可选配置源，文档见 `docs/10-etcd-hot-reload.md`；这条闭环命令本身不向 etcd 写入。具体数字以该提交的 `make loop` 输出为准。
 
 ## 评测器（internal/eval/）
 
@@ -70,7 +70,7 @@ Trace 采集（mq 削峰 + 按月分表）
 
 三条都过才灰度。任一不过，优化任务标 failed，回流给归因引擎重判。
 
-上述是目标门禁。当前闭环检查同一数据快照下的来源命中不降、`deterministic_proxy` 词法分不降（容差 1e-6）、不新增引用失败、归因失败数不增加，并且至少一项硬指标变好。它不执行真实模型 G-Eval、claim-level Faithfulness 或安全评测。进程内灰度按租户哈希分流，观测窗口回落会回滚，稳定则放到 100%；etcd 灰度源仍未实现。`make canary` 的窗口是命令给定的，不是在线测量。通过只表示离线硬指标没有退步且有一项变好，不能表示生成答案变正确。连续调用 `POST /v1/evolve` 时，基线取当前生效的切分、Prompt 渲染模式和 TopK。
+上述是目标门禁。当前闭环检查同一数据快照下的来源命中不降、`deterministic_proxy` 词法分不降（容差 1e-6）、不新增引用失败、归因失败数不增加，并且至少一项硬指标变好。它不执行真实模型 G-Eval、claim-level Faithfulness 或安全评测。进程内灰度按租户哈希分流，观测窗口回落会回滚，稳定则放到 100%。`make canary` 的窗口是命令给定的，不是在线测量。etcd 复用这套方法，不另写一套分流。通过只表示离线硬指标没有退步且有一项变好，不能表示生成答案变正确。连续调用 `POST /v1/evolve` 时，基线取当前生效的切分、Prompt 渲染模式和 TopK。
 
 ## 怎么跑
 
@@ -90,7 +90,7 @@ make loop
 
 `make loop` 与 `POST /v1/evolve` 绑定工作区里的 `datasets/rag_eval_98.json` 和它点名的源文件，改 README 或这些源文件会改变这次命令的哈希。`TestClosedLoopPublic98` 不读工作区，它读 `datasets/rag_eval_98_snapshot.json` 里评测分支测量时保存的固定快照（哈希 `1d29ca4e857a3ccda71f50b4f14fd79e55335073de108b98208c4826817d6cae`），所以后来的文档改动不会让这个测试失败。下面这段是本分支实时命令的结果，和测试锁的快照不是同一份语料。两者都用确定性本地替身（不调用外部 LLM）对每条样本检索并渲染回答，不经过 Chat 运行时。失败按模拟调用记录归因：期望来源未命中，或来源命中但检索上下文没有 ground truth，归检索层；tool error / unknown tool / max iterations 归工具层；只有上下文含有 ground truth 而渲染回答没有时归 Prompt 层。优化任务写成结构化记录（层、原因、候选配置、预测区间）。预测区间是失败占比乘固定系数，不是校准后的置信区间。公开基线上工具策略一直是 search，工具层失败数为 0，那三类信号由单元测试覆盖。
 
-当前提交实测（`go run ./cmd/loop`，语料哈希 `65135211c07420203ee0da76f4762432c9ae196bd258a477a4398384471d3ebb`）：基线 fixed / echo / top-3，来源命中 0.1939，词法代理 0.4402，引用失败 79，归因失败 98（来源未命中 79，上下文缺少 ground truth 19，Prompt 0，工具 0）。recursive 来源命中 +0.1531，预测命中，但词法代理下降，门禁拒绝。semantic 来源命中 −0.0204，预测未命中，门禁拒绝。parent-child 来源命中 −0.0204，预测未命中，门禁拒绝。retrieval-topk 把 TopK 提到 5，来源命中 +0.1122（到 0.3061），预测命中，词法代理与基线相同，引用失败 79→68，归因失败数仍是 98，门禁通过并进入 10% 灰度。灰度配置版本是 2，稳定配置仍是版本 1。这不是生成答案变正确，也没有减少归因失败。
+当前提交实测（`go run ./cmd/loop`，语料哈希 `f35fe8637f9522843cb1b6b012a47b69ea5c4e632159be5e745be2b47b84e679`）：基线 fixed / echo / top-3，来源命中 0.2143，词法代理 0.4402，引用失败 77，归因失败 98（来源未命中 77，上下文缺少 ground truth 21，Prompt 0，工具 0）。recursive 来源命中 +0.1429，预测命中，但词法代理下降，门禁拒绝。semantic 来源命中 −0.0408，预测未命中，门禁拒绝。parent-child 来源命中 −0.0918，预测未命中，门禁拒绝。retrieval-topk 把 TopK 提到 5，来源命中 +0.1122（到 0.3265），预测命中，词法代理与基线相同，引用失败 77→66，归因失败 98→97，门禁通过并进入 10% 灰度。灰度配置版本是 2，稳定配置仍是版本 1。这不是生成答案变正确。
 
 输出示例（`make bench`）：
 

@@ -1,14 +1,10 @@
 package config
 
-// Source produces config changes for the Manager to Reload. A production
-// deployment implements this with an etcd Watcher; the in-process ChannelSource
-// below is used by tests and the local demo so the hot-reload mechanism is
-// exercised without external infrastructure.
-//
-// The etcd-backed Source is intentionally not implemented here to keep the
-// module dependency-free and `go test` runnable without a live etcd. The
-// Manager is transport-agnostic: any Source that emits (name, Config) pairs
-// drives the same Reload + drain path.
+// Source produces config changes for the Manager to reload. EtcdSource watches
+// an etcd prefix when endpoints are configured. ChannelSource is the in-process
+// source used by tests and by agentd when AGENTLOOM_ETCD_ENDPOINTS is empty.
+// Stable documents go through Reload and Drain. Canary documents call the
+// existing percent split, widen, promote, and rollback methods.
 
 // Source emits config updates for one or more agent names.
 type Source interface {

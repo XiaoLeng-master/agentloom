@@ -161,8 +161,44 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/bench", a.bench)
 	mux.HandleFunc("GET /v1/evolutions", a.evolutions)
 	mux.HandleFunc("GET /v1/evolutions/{id}", a.experiment)
+	mux.HandleFunc("GET /v1/config", a.runtimeConfig)
 	mux.HandleFunc("GET /health/live", func(w http.ResponseWriter, r *http.Request) { write(w, 200, map[string]string{"status": "ok"}) })
 	return mux
+}
+
+func (a *App) runtimeConfig(w http.ResponseWriter, r *http.Request) {
+	if !a.access.publicAllowed(r) {
+		write(w, 403, map[string]string{"error": "invalid token"})
+		return
+	}
+	if a.manager == nil {
+		write(w, 503, map[string]string{"error": "configuration unavailable"})
+		return
+	}
+	tenant := r.Header.Get("X-Tenant")
+	if tenant == "" {
+		tenant = "local"
+	}
+	handle, err := a.manager.AcquireTenant("kb-agent", tenant)
+	if err != nil {
+		write(w, 503, map[string]string{"error": "configuration unavailable"})
+		return
+	}
+	defer handle.Release()
+	cfg := handle.Config()
+	percent, active := a.manager.CanaryPercent("kb-agent")
+	write(w, 200, map[string]any{
+		"tenant":         tenant,
+		"version":        cfg.Version,
+		"system_prompt":  cfg.SystemPrompt,
+		"model":          cfg.Model,
+		"chunk_strategy": cfg.ChunkStrategy,
+		"prompt_mode":    cfg.PromptMode,
+		"top_k":          cfg.TopK,
+		"canary_percent": percent,
+		"canary_active":  active,
+		"in_canary":      active && config.InCanary(tenant, percent),
+	})
 }
 
 func (a *App) bench(w http.ResponseWriter, r *http.Request) {
