@@ -13,7 +13,8 @@ import (
 // cancelled wait is counted as a rejection.
 //
 // release must be called when the admitted request finishes. The key is the
-// tenant when set, otherwise the agent name.
+// tenant (for /v1/chat, the request source address) when set, otherwise the
+// agent name.
 type ConcurrencyAdmission struct {
 	lim *quota.Limiter
 }

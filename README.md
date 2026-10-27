@@ -38,14 +38,14 @@ agentloom 把这三件事做在同一套平台里，并且**让每一环都咬�
 
 | 特性 | 说明 | 状态 |
 |---|---|---|
-| **多 Agent 分层协作** | Planner / Executor / Verifier 角色池与消息契约；Executor 子任务在有界 worker pool 中并发执行，结果按子任务顺序汇总。全局并发信号量 + 按 Agent 名称的并发信号量：超额排队，等待受 context 取消或超时约束，超时计为拒绝。`ConcurrencyStats` 暴露并发数、排队数和拒绝数。测量见 [`docs/07-concurrency-quota.md`](docs/07-concurrency-quota.md) | ✅ |
+| **多 Agent 分层协作** | Planner / Executor / Verifier 角色池与消息契约；Executor 子任务在有界 worker pool 中并发执行，结果按子任务顺序汇总。回合内还有全局并发信号量 + 按 Agent 名称的并发信号量：超额排队，等待受 context 取消或超时约束，超时计为拒绝。`ConcurrencyStats` 暴露并发数、排队数和拒绝数。测量见 [`docs/08-concurrency-quota.md`](docs/08-concurrency-quota.md) | ✅ |
 | **Harness 自进化闭环** | 可手动触发同语料检索复测、确定性质量代理、引用失败统计、预测检验、门禁、本地配置生效与实验历史读回；真实 LLM Judge、Trace 驱动批评测及自动回滚仍未完成 | 🚧 |
 | **预测式归因** | 每次优化提交声明预期收益，评测验证预测成立与否，逐次变更可归因 | 📋 |
 | **配置热更新** | 进程内引用计数替换；etcd Source 尚未实现 | ✅ |
 | **MCP 双传输适配** | stdio / HTTP JSON-RPC；请求取消、响应关联校验与有限 JSON Schema 参数校验；写工具默认不重试 | 🚧 |
 | **可评测 RAG** | 4 种切分策略可插拔 + 自建 98 条标注评估集，HitRate@K 可一键复现 | ✅ |
 | **评测 harness** | Trace + 规则代理评测器 + 词法测试 Prober + Markdown 报告；真实 Judge 尚未接入 | 🚧 |
-| **网关治理链** | Filter Chain：本地演示 token、关键词注入信号、单机租户滑动窗口限流。另有 `ConcurrencyAdmission`（全局 + 按租户，无租户时按 Agent）并发配额：超额排队、超时拒绝并计数。演示入口仍只挂滑动窗口，未把 `ConcurrencyAdmission` 接进 `/v1/chat` | 🚧 |
+| **网关治理链** | `/v1/chat` 在公开模式权限之后做注入检测，并按来源地址做滑动窗口（默认每分钟 60 次）。在途请求只经过一道并发准入：全局槽位默认 4，同一来源默认也是 4；超额排队，请求 context 结束返回 429。`AGENTLOOM_CHAT_GLOBAL` 与 `AGENTLOOM_CHAT_PER_SOURCE` 可覆盖。见 [`docs/08-concurrency-quota.md`](docs/08-concurrency-quota.md) | 🚧 |
 | **插件化运行时** | IoC 生命周期：planner/memory/tool/evaluator 可热插拔，mount/reload/dispose 不重置 agent 状态 | ✅ |
 | **后端底座** | 可选 Redis 持久化演示 Trace；内存队列、按月分组及内存缓存；Kafka、etcd、Milvus 与 DLQ 尚未接入 | 🚧 |
 
@@ -106,7 +106,7 @@ agentloom/
 │   ├── mcp/                      # stdio/http transport、tool adapter
 │   ├── rag/                      # splitter(4 策略)、embedding、store、retriever
 │   ├── eval/                     # trace、evaluator、geval、report
-│   ├── gateway/                  # filter chain（认证/注入检测/滑动窗口限流）+ 两级并发配额
+│   ├── gateway/                  # 注入检测、按来源滑动窗口、全局+来源在途准入
 │   ├── runtime/plugin/           # IoC 插件生命周期（mount/reload/dispose）
 │   ├── orchestrator/             # 多 Agent 池、有界 worker pool、两级并发配额
 │   ├── quota/                    # 全局 + 按 key 的并发信号量（排队、超时拒绝、计数）

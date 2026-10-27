@@ -10,6 +10,23 @@ import (
 	"github.com/XiaoLeng-master/agentloom/internal/quota"
 )
 
+func TestAdmitRunsFiltersBeforeTakingASlot(t *testing.T) {
+	g := New(AuthFilter{})
+	g.SetAdmission(NewConcurrencyAdmission(1, 1))
+	release, by, _ := g.Admit(context.Background(), Request{Prompt: "hello"})
+	if release != nil || by != "auth" {
+		t.Fatalf("missing token should stop before admission, release=%v by=%q", release != nil, by)
+	}
+	if g.Admission().Stats().Admitted != 0 {
+		t.Fatalf("denied filter consumed a slot: %+v", g.Admission().Stats())
+	}
+	release, by, reason := g.Admit(context.Background(), Request{Token: "t", Tenant: "203.0.113.8"})
+	if release == nil {
+		t.Fatalf("admit: %s %s", by, reason)
+	}
+	release()
+}
+
 func TestConcurrencyAdmissionPerTenantAndGlobal(t *testing.T) {
 	a := NewConcurrencyAdmission(2, 1)
 	release := make(chan struct{})

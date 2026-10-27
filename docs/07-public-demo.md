@@ -24,7 +24,7 @@ export DEEPSEEK_MODEL=deepseek-flash
 make run
 ```
 
-公开模式下 Chat 的并发槽位为 4，网关按来源地址限制为每分钟 60 次；`POST /v1/evolve` 只接受管理员令牌。浏览器只发送用户输入的访问令牌，不接触 DeepSeek API Key。反向代理部署时应正确传递真实来源地址，且仍需在代理层补充 TLS、请求体大小和更严格的速率限制。
+公开模式下 Chat 的在途请求只有一道并发准入：全局槽位默认 4，同一来源默认也是 4。超过后请求排队，直到有空位或客户端取消/超时，超时返回 429。按来源的滑动窗口仍是每分钟 60 次。`AGENTLOOM_CHAT_GLOBAL` 与 `AGENTLOOM_CHAT_PER_SOURCE` 可覆盖槽位。`POST /v1/evolve` 只接受管理员令牌。浏览器只发送用户输入的访问令牌，不接触 DeepSeek API Key。反向代理部署时应正确传递真实来源地址，且仍需在代理层补充 TLS、请求体大小和更严格的速率限制。
 
 ## 仍未声称完成的能力
 
