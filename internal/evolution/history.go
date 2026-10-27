@@ -31,9 +31,13 @@ func NewExperiment(before, after RetrievalRun, prediction Prediction, decision D
 	if _, err := rand.Read(random[:]); err != nil {
 		return Experiment{}, err
 	}
+	quality := "not_evaluated"
+	if before.QualityMode != "" || after.QualityMode != "" {
+		quality = after.QualityMode
+	}
 	return Experiment{ID: hex.EncodeToString(random[:]), CreatedAt: time.Now().UTC(), Before: before, After: after,
 		Failures: DiagnoseRetrieval(before, after), Prediction: prediction, ActualDelta: after.HitRate - before.HitRate,
-		Decision: decision, AnswerQuality: "not_evaluated"}, nil
+		Decision: decision, AnswerQuality: quality}, nil
 }
 
 var ErrExperimentNotFound = errors.New("experiment not found")

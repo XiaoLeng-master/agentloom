@@ -1,6 +1,9 @@
 package eval
 
-import "strings"
+import (
+	"strings"
+	"unicode"
+)
 
 // PromptEvaluator scores instruction following: does the answer address the
 // query and overlap with the expected answer? Lexical overlap is a cheap
@@ -103,8 +106,8 @@ func jaccard(a, b string) float32 {
 	if a == "" || b == "" {
 		return 0
 	}
-	sa := toSet(strings.Fields(a))
-	sb := toSet(strings.Fields(b))
+	sa := toSet(terms(a))
+	sb := toSet(terms(b))
 	if len(sa) == 0 || len(sb) == 0 {
 		return 0
 	}
@@ -116,6 +119,35 @@ func jaccard(a, b string) float32 {
 	}
 	union := len(sa) + len(sb) - inter
 	return float32(inter) / float32(union)
+}
+
+// terms keeps ASCII words and individual CJK characters so Chinese answers
+// are evaluated by content rather than as one whitespace-free token.
+func terms(s string) []string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	var out []string
+	var ascii []rune
+	flush := func() {
+		if len(ascii) > 0 {
+			out = append(out, string(ascii))
+			ascii = ascii[:0]
+		}
+	}
+	for _, r := range []rune(s) {
+		switch {
+		case unicode.IsLetter(r) || unicode.IsDigit(r):
+			if unicode.Is(unicode.Han, r) {
+				flush()
+				out = append(out, string(r))
+			} else {
+				ascii = append(ascii, r)
+			}
+		default:
+			flush()
+		}
+	}
+	flush()
+	return out
 }
 
 func toSet(xs []string) map[string]bool {

@@ -14,9 +14,11 @@ import (
 
 // Case identifies the expected source for one public retrieval question.
 type Case struct {
-	ID        string `json:"id"`
-	Question  string `json:"question"`
-	SourceDoc string `json:"sourceDoc"`
+	ID          string `json:"id"`
+	Type        string `json:"type"`
+	Question    string `json:"question"`
+	GroundTruth string `json:"groundTruth"`
+	SourceDoc   string `json:"sourceDoc"`
 }
 
 // CaseResult keeps per-question evidence so aggregate scores are auditable.
@@ -29,11 +31,16 @@ type CaseResult struct {
 
 // RetrievalRun is a reproducible run against a fixed dataset and corpus.
 type RetrievalRun struct {
-	Strategy    string       `json:"strategy"`
-	DatasetHash string       `json:"dataset_hash"`
-	Cases       int          `json:"cases"`
-	HitRate     float64      `json:"hit_rate"`
-	Results     []CaseResult `json:"results"`
+	Strategy          string             `json:"strategy"`
+	DatasetHash       string             `json:"dataset_hash"`
+	Cases             int                `json:"cases"`
+	HitRate           float64            `json:"hit_rate"`
+	QualityMode       string             `json:"quality_mode,omitempty"`
+	Quality           float64            `json:"quality,omitempty"`
+	GroundingFailures int                `json:"grounding_failures,omitempty"`
+	PassRate          float64            `json:"pass_rate,omitempty"`
+	EvaluatorScores   map[string]float64 `json:"evaluator_scores,omitempty"`
+	Results           []CaseResult       `json:"results"`
 }
 
 // RunRetrieval evaluates the same K=3 source-hit metric as cmd/bench.
@@ -103,12 +110,26 @@ func LoadPublicCorpus(path string) ([]Case, []rag.Document, string, error) {
 func ImproveRetrieval(manager *config.Manager, name string, candidate config.Config, cases []Case, docs []rag.Document, hash string, before, after rag.Splitter, prediction Prediction) (RetrievalRun, RetrievalRun, Decision, error) {
 	baseline := RunRetrieval(cases, docs, hash, before)
 	next := RunRetrieval(cases, docs, hash, after)
+	baseline = withHarness(baseline, RunHarness(cases, docs, before))
+	next = withHarness(next, RunHarness(cases, docs, after))
 	candidate.ChunkStrategy = after.Name()
 	decision, err := Promote(manager, name, candidate,
-		Result{Cases: len(cases), HitRate: baseline.HitRate},
-		Result{Cases: len(cases), HitRate: next.HitRate}, prediction)
+		Result{Cases: len(cases), HitRate: baseline.HitRate, Quality: baseline.Quality},
+		Result{Cases: len(cases), HitRate: next.HitRate, Quality: next.Quality, NewUnsafeFailures: maxInt(0, next.GroundingFailures-baseline.GroundingFailures)}, prediction)
 	if err == nil {
-		decision.Reason = "retrieval gate passed; answer quality and safety not evaluated"
+		decision.Reason = "deterministic proxy gate passed; real LLM Judge not enabled"
 	}
 	return baseline, next, decision, err
+}
+
+func withHarness(run RetrievalRun, h HarnessRun) RetrievalRun {
+	run.QualityMode, run.Quality, run.GroundingFailures, run.PassRate, run.EvaluatorScores = h.Mode, h.Quality, h.GroundingFailures, h.PassRate, h.Scores
+	return run
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }

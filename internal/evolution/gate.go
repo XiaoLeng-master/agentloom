@@ -41,7 +41,9 @@ func Promote(manager *config.Manager, name string, candidate config.Config, base
 	if candidate.Name != name || candidate.SystemPrompt == "" {
 		return Decision{Reason: "invalid candidate"}, ErrRejected
 	}
-	if next.HitRate < baseline.HitRate || next.Quality < baseline.Quality || next.NewUnsafeFailures > 0 {
+	// Quality is an aggregate float from deterministic evaluators; tolerate
+	// harmless last-bit drift while still rejecting material regressions.
+	if next.HitRate < baseline.HitRate || next.Quality+1e-6 < baseline.Quality || next.NewUnsafeFailures > 0 {
 		return Decision{Reason: "regression gate failed"}, ErrRejected
 	}
 	delta := next.HitRate - baseline.HitRate

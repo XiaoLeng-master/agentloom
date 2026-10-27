@@ -73,7 +73,7 @@ func TestExperimentChangesSubsequentTraceVersion(t *testing.T) {
 		ID            string `json:"id"`
 		AnswerQuality string `json:"answer_quality"`
 	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &experiment); err != nil || experiment.ID == "" || experiment.AnswerQuality != "not_evaluated" {
+	if err := json.Unmarshal(rec.Body.Bytes(), &experiment); err != nil || experiment.ID == "" || experiment.AnswerQuality != "deterministic_proxy" {
 		t.Fatalf("experiment=%+v err=%v", experiment, err)
 	}
 	get := httptest.NewRequest(http.MethodGet, "/v1/evolutions/"+experiment.ID, nil)

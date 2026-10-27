@@ -18,6 +18,8 @@ type DeepSeekClient struct {
 	Endpoint   string
 	Tools      []map[string]any
 	HTTPClient *http.Client
+	MaxTokens  int
+	NoThinking bool
 }
 
 // Complete converts runtime messages to DeepSeek's chat format and validates its reply.
@@ -53,6 +55,12 @@ func (c DeepSeekClient) Complete(ctx context.Context, msgs []Message) (Message, 
 		items = append(items, item)
 	}
 	payload := map[string]any{"model": model, "messages": items, "stream": false}
+	if c.MaxTokens > 0 {
+		payload["max_tokens"] = c.MaxTokens
+	}
+	if c.NoThinking {
+		payload["thinking"] = map[string]string{"type": "disabled"}
+	}
 	if len(c.Tools) > 0 {
 		payload["tools"] = c.Tools
 		if len(msgs) > 0 && msgs[len(msgs)-1].Role == RoleTool {
