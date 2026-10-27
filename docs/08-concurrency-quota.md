@@ -1,8 +1,8 @@
 # 08 · 并发配额
 
-本文记录两件事：`/v1/chat` 的在途准入怎么和 `2291d87` 的 Chat 槽位、按来源限流收成一套；以及在合并之后的 commit `62ce1d41b367b8bd52bea3bd9305ae68a04a4001` 上重新跑出的 Executor 压测。压测数字是该次进程的原始输出。再跑一次，排队高水位和拒绝次数会变。
+本文记录两件事：`/v1/chat` 的在途准入怎么和 `2291d87` 的 Chat 槽位、按来源限流收成一套；以及在 commit `0945d8dc17a67192a30ae9e1eb4378dca4050af7` 上重跑的 Executor 压测。准入和拒绝会随调度波动，下面写的是 16 次运行的区间，不是单次拆解。
 
-测量时工作区干净。记录本文的提交在 `62ce1d4` 之后。分支已用 merge（不是 rebase）纳入 `origin/main` 的 `2291d87`（完善公开演示权限与确定性评测闭环）。
+测量时工作区干净，只含该 commit。分支已用 merge（不是 rebase）纳入 `origin/main` 的 `2291d87`（完善公开演示权限与确定性评测闭环）。并发配额文档用 08，因为 07 已是公开演示说明。
 
 ## `/v1/chat` 只有一道在途门
 
@@ -22,54 +22,36 @@ HTTP 行为由 `TestChatAdmissionQueuesAndRejects`、`TestChatAdmissionPerSource
 
 ## Executor 压测
 
-`cmd/quotabench` 使用进程内 stub，不访问网络，也不调用模型 API。每个 `Run` 有 4 个 Executor 子任务。默认参数：worker 4，全局并发 3，每个 Executor 2，睡眠 20ms，12 个并发 `Run`，其中 4 个超时 30ms、其余 5s。12 × 4 = 48 次调用尝试。
+`cmd/quotabench` 使用进程内 stub，不访问网络，也不调用模型 API。每个 `Run` 有 4 个 Executor 子任务。默认参数：worker 4，全局并发 3，每个 Executor 2，睡眠 20ms，12 个并发 `Run`，其中 4 个超时 30ms、其余 5s。12 × 4 = 48 次调用尝试。Executor 跑在该回合的 worker 里：panic 转成这个子任务的错误；第一个执行错误会取消其余子任务。本地 `/v1/chat` 的演示 Planner 只产出 1 个子任务，并发上限要看这里的压测，而不是演示对话。`SetConcurrency` 在有回合运行时会返回错误，避免新旧两套信号量把全局上限放大。
 
-在仓库根目录、Go 1.22.2（`go1.22.2 linux/amd64`）执行：
+在仓库根目录、Go 1.22.2（`go1.22.2 linux/amd64`）先编译再各跑 8 次，共 16 次，时间从 `2026-10-27T08:42:23.843614479Z` 到 `2026-10-27T08:42:34.778026443Z`。观测并发若超过配置上限，进程会以退出码 1 结束；16 次都是退出码 0。
 
 ```bash
-go run -race ./cmd/quotabench
+go build -o /tmp/qb ./cmd/quotabench
+go build -race -o /tmp/qb-race ./cmd/quotabench
+# 普通二进制与 race 二进制各执行 8 次
 ```
 
-开始 `2026-10-27T08:30:05.421636004Z`，结束 `2026-10-27T08:30:05.647559537Z`，退出码 0。观测并发若超过配置上限，进程会以退出码 1 结束；这次没有。
-
-```json
-{
-  "admitted": 33,
-  "combined_peak_queued": 45,
-  "exec_sleep_ms": 20,
-  "finished_at": "2026-10-27T08:30:05.647559537Z",
-  "global_limit": 3,
-  "go_version": "go1.22.2",
-  "inflight_end": 0,
-  "long_timeout_ms": 5000,
-  "observed_peak_inflight": 3,
-  "observed_per_agent_peak": {
-    "exec-a": 2,
-    "exec-b": 2
-  },
-  "per_agent_limit": 2,
-  "queued_end": 0,
-  "quota_peak_inflight": 3,
-  "quota_peak_queued": 45,
-  "rejected": 15,
-  "requests": 12,
-  "runs_failed": 4,
-  "runs_ok": 8,
-  "short_timeout_ms": 30,
-  "short_timeout_requests": 4,
-  "started_at": "2026-10-27T08:30:05.421636004Z",
-  "subtasks_per_request": 4,
-  "wall_ms": 225,
-  "workers": 4
-}
-```
+| 指标 | 16 次结果 |
+|---|---|
+| admitted | 32–38 |
+| rejected | 10–16 |
+| admitted + rejected | 48（16/16） |
+| observed_peak_inflight | 3（16/16） |
+| exec-a / exec-b peak | 2 / 2（16/16） |
+| quota_peak_inflight | 3（16/16） |
+| quota_peak_queued | 45（16/16） |
+| combined_peak_queued | 45（16/16） |
+| runs_ok / runs_failed | 8 / 4（16/16） |
+| inflight_end / queued_end | 0 / 0（16/16） |
+| wall_ms | 223–256 |
 
 - 观测到的 Executor 峰值并发是 **3**，`exec-a` / `exec-b` 各 **2**，都等于本次配置的上限。
-- 信号量排队高水位 **45**，与 pool 积压加信号量排队的高水位相同。每个 `Run` 的 worker 数不少于子任务数，排队主要在信号量上。
-- 准入 **33**，拒绝 **15**，`33 + 15 = 48`。成功的 8 个 `Run` 各准入 4 次，共 32 次；剩下 1 次准入和 15 次拒绝落在 4 个 30ms 超时的 `Run` 上（1 + 15 = 16）。
-- 结束时在途和排队都是 0。墙钟 **225ms**。
+- 合计排队峰值与信号量排队高水位在这 16 次里都是 **45**。合计值在同一把锁里用「pool 积压 + 信号量排队」更新，移交时先离开积压再进入信号量，所以同一次尝试不会被加两次。45 没有超过 48 次尝试。每个 `Run` 的 worker 数不少于子任务数，排队主要在信号量上；全局上限是 3，因此最多有 3 个在执行，其余才算排队。
+- 准入 **32–38**，拒绝 **10–16**，两者之和恒为 **48**。成功/失败次数每次都是 8/4。短超时那 4 个 `Run` 上的准入次数会变，不能把某一次的「成功 32 + 短超时若干」写成固定拆分。
+- 结束时在途和排队都是 0。墙钟 **223–256ms**。
 
-同一次提交上，紧挨着这次压测之前，还跑了：
+同一次提交上，紧挨着这组压测之前，还跑了：
 
 ```bash
 go test -count=1 ./...
