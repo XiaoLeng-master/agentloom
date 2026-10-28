@@ -2,6 +2,7 @@ package app
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/XiaoLeng-master/agentloom/internal/config"
+	"github.com/XiaoLeng-master/agentloom/internal/evolution"
 	"github.com/XiaoLeng-master/agentloom/internal/rag"
 )
 
@@ -86,5 +88,50 @@ func TestExperimentChangesSubsequentTraceVersion(t *testing.T) {
 	after := chat()
 	if before.ConfigVersion != 1 || before.ChunkStrategy != "fixed" || after.ConfigVersion != 2 || after.ChunkStrategy != "recursive" {
 		t.Fatalf("before=%+v after=%+v", before, after)
+	}
+}
+
+type failingExperimentHistory struct{}
+
+func (failingExperimentHistory) Save(evolution.Experiment) error {
+	return errors.New("disk unavailable")
+}
+func (failingExperimentHistory) Get(string) (evolution.Experiment, error) {
+	return evolution.Experiment{}, evolution.ErrExperimentNotFound
+}
+func (failingExperimentHistory) List() ([]evolution.Experiment, error) { return nil, nil }
+
+func TestExperimentPersistenceFailureRollsBackCandidate(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "guide.txt")
+	if err := os.WriteFile(source, []byte("agentloom planner executor verifier guide"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	dataset := filepath.Join(dir, "cases.json")
+	cases, err := json.Marshal([]map[string]string{{"id": "case-1", "question": "planner", "sourceDoc": source}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dataset, cases, 0600); err != nil {
+		t.Fatal(err)
+	}
+	mgr := config.NewManager()
+	mgr.Register("kb-agent", config.Config{Name: "kb-agent", SystemPrompt: "demo", ChunkStrategy: "fixed"})
+	a := New(nil).WithConfigManager(mgr).WithCorpusPath(dataset)
+	a.history = failingExperimentHistory{}
+	req := httptest.NewRequest(http.MethodPost, "/v1/evolve", nil)
+	req.Header.Set("Authorization", "Bearer local-demo")
+	rec := httptest.NewRecorder()
+	a.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), `"RolledBack":true`) {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	active, err := mgr.Acquire("kb-agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer active.Release()
+	if active.Config().ChunkStrategy != "fixed" || active.Config().Version != 3 {
+		t.Fatalf("candidate remained active: %+v", active.Config())
 	}
 }

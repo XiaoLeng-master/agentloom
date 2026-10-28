@@ -30,6 +30,8 @@ type Decision struct {
 	PredictionMatched bool
 	Reason            string
 	Version           int
+	RolledBack        bool
+	RollbackVersion   int
 }
 
 // Promote replaces the active config only after all deterministic guards pass.

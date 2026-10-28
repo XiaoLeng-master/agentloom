@@ -48,6 +48,13 @@ type retrievalLog struct {
 	entries []RetrievalEvidence
 }
 type retrievalKey struct{}
+
+type experimentHistory interface {
+	Save(evolution.Experiment) error
+	Get(string) (evolution.Experiment, error)
+	List() ([]evolution.Experiment, error)
+}
+
 type App struct {
 	gate         *gateway.Gateway
 	runtime      *orchestrator.Orchestrator
@@ -60,7 +67,7 @@ type App struct {
 	modelMode    bool
 	manager      *config.Manager
 	corpusPath   string
-	history      *evolution.History
+	history      experimentHistory
 	batchHistory *evolution.TraceBatchHistory
 	access       AccessPolicy
 	chatSlots    chan struct{}
@@ -193,6 +200,10 @@ func (a *App) evolve(w http.ResponseWriter, r *http.Request) {
 		write(w, 503, map[string]string{"error": "configuration unavailable"})
 		return
 	}
+	if a.history == nil {
+		write(w, 503, map[string]string{"error": "experiment history unavailable"})
+		return
+	}
 	h, err := a.manager.Acquire("kb-agent")
 	if err != nil {
 		write(w, 503, map[string]string{"error": "configuration unavailable"})
@@ -218,20 +229,38 @@ func (a *App) evolve(w http.ResponseWriter, r *http.Request) {
 		rag.FixedSplitter{Size: 40}, rag.RecursiveSplitter{Size: 60, Overlap: 10}, prediction)
 	result, recordErr := evolution.NewExperiment(before, after, prediction, decision)
 	if recordErr != nil {
+		if err == nil {
+			a.rollbackConfig("kb-agent", cfg, nil, "experiment id unavailable")
+		}
 		write(w, 500, map[string]string{"error": "experiment id unavailable"})
 		return
 	}
-	if a.history != nil {
-		if saveErr := a.history.Save(result); saveErr != nil {
-			write(w, 503, map[string]any{"error": "experiment evidence not saved", "result": result})
-			return
+	if saveErr := a.history.Save(result); saveErr != nil {
+		if err == nil {
+			a.rollbackConfig("kb-agent", cfg, &result, "experiment evidence not saved")
 		}
+		write(w, 503, map[string]any{"error": "experiment evidence not saved", "result": result})
+		return
 	}
 	if err != nil {
 		write(w, 409, result)
 		return
 	}
 	write(w, 200, result)
+}
+
+func (a *App) rollbackConfig(name string, previous config.Config, result *evolution.Experiment, reason string) {
+	a.manager.Reload(name, previous)
+	version := 0
+	if active, err := a.manager.Acquire(name); err == nil {
+		version = active.Config().Version
+		active.Release()
+	}
+	if result != nil {
+		result.Decision.RolledBack = true
+		result.Decision.RollbackVersion = version
+		result.Decision.Reason = reason + "; candidate rolled back"
+	}
 }
 
 func (a *App) evolutions(w http.ResponseWriter, r *http.Request) {
