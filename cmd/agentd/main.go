@@ -20,6 +20,7 @@ import (
 	"github.com/XiaoLeng-master/agentloom/internal/app"
 	"github.com/XiaoLeng-master/agentloom/internal/config"
 	"github.com/XiaoLeng-master/agentloom/internal/core"
+	"github.com/XiaoLeng-master/agentloom/internal/eval"
 	"github.com/XiaoLeng-master/agentloom/internal/rag"
 	"github.com/XiaoLeng-master/agentloom/web"
 )
@@ -79,6 +80,13 @@ func main() {
 	}
 	local := app.NewWithModels(docs, models)
 	local.WithConfigManager(mgr).WithExperimentHistory(".agentloom/evolutions")
+	if key := os.Getenv("DEEPSEEK_API_KEY"); key != "" {
+		judgeModel := os.Getenv("DEEPSEEK_JUDGE_MODEL")
+		if judgeModel == "" {
+			judgeModel = os.Getenv("DEEPSEEK_MODEL")
+		}
+		local.WithAnswerJudge(eval.DeepSeekJudge{APIKey: key, Model: judgeModel})
+	}
 	if publicMode {
 		local.WithAccessPolicy(app.AccessPolicy{PublicMode: true, PublicToken: publicToken, AdminToken: adminToken}).WithMaxConcurrentChats(4)
 	} else if adminToken != "" {

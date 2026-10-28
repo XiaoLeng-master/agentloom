@@ -66,7 +66,7 @@ func NewTraceBatch(traces []RuntimeTrace) (TraceBatch, error) {
 
 // NewTraceBatchWithCases adds deterministic actual-answer evaluation for
 // traces whose query exactly matches a public ground-truth case.
-func NewTraceBatchWithCases(traces []RuntimeTrace, cases []Case) (TraceBatch, error) {
+func NewTraceBatchWithCases(traces []RuntimeTrace, cases []Case, judges ...eval.Evaluator) (TraceBatch, error) {
 	if len(traces) == 0 {
 		return TraceBatch{}, fmt.Errorf("empty trace batch")
 	}
@@ -82,7 +82,11 @@ func NewTraceBatchWithCases(traces []RuntimeTrace, cases []Case) (TraceBatch, er
 	for _, trace := range traces {
 		report := evaluateRuntimeTrace(trace)
 		if c, ok := groundTruth[strings.TrimSpace(trace.Query)]; ok {
-			report.AnswerQuality = evaluateActualAnswer(trace, c)
+			var judge eval.Evaluator
+			if len(judges) > 0 {
+				judge = judges[0]
+			}
+			report.AnswerQuality = evaluateActualAnswer(trace, c, judge)
 			for _, score := range report.AnswerQuality.Scores {
 				if !score.Pass {
 					report.Failures = append(report.Failures, "answer_"+score.Name)
@@ -104,16 +108,22 @@ func NewTraceBatchWithCases(traces []RuntimeTrace, cases []Case) (TraceBatch, er
 	return batch, nil
 }
 
-func evaluateActualAnswer(trace RuntimeTrace, c Case) *ActualAnswerEvaluation {
+func evaluateActualAnswer(trace RuntimeTrace, c Case, judge eval.Evaluator) *ActualAnswerEvaluation {
 	tools := []string(nil)
 	if len(trace.RetrievalSources) > 0 {
 		tools = []string{"search_docs"}
 	}
 	input := eval.Trace{ID: trace.ID, Query: trace.Query, Answer: trace.Answer, Citations: trace.RetrievalSources, Tools: tools,
 		Expected: eval.Expected{Answer: c.GroundTruth, Tools: []string{"search_docs"}, GroundedIn: []string{c.SourceDoc}}}
-	registry := eval.NewRegistry(eval.PromptEvaluator{}, eval.RAGEvaluator{}, eval.SkillEvaluator{}, eval.AgentEvaluator{}, eval.GEval{})
+	mode := "deterministic_actual_answer"
+	if judge == nil {
+		judge = eval.GEval{}
+	} else {
+		mode = judge.Name() + "_actual_answer"
+	}
+	registry := eval.NewRegistry(eval.PromptEvaluator{}, eval.RAGEvaluator{}, eval.SkillEvaluator{}, eval.AgentEvaluator{}, judge)
 	report := eval.Build(input, registry)
-	return &ActualAnswerEvaluation{Mode: "deterministic_actual_answer", CaseID: c.ID, Passed: report.Pass, Scores: report.Scores}
+	return &ActualAnswerEvaluation{Mode: mode, CaseID: c.ID, Passed: report.Pass, Scores: report.Scores}
 }
 
 func evaluateRuntimeTrace(trace RuntimeTrace) TraceEvaluation {

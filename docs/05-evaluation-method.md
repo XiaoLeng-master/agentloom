@@ -2,7 +2,7 @@
 
 > 4 类评测器怎么算分、HitRate@K 怎么算、门禁怎么卡。
 
-> **实现边界**：当前 `POST /v1/evolve` 会批量复测 98 条公开问题的来源命中，并将检索上下文送入 `internal/eval` 的规则评测器和确定性词法 Prober，记录 `deterministic_proxy` 质量、引用失败数和通过率后执行门禁。`POST /v1/evaluations` 可把真实请求 Trace 纳入 `runtime_evidence_rules` 批次，检查请求、回答、检索依据和 Contract 链是否完整；当请求问题与公开评估集精确匹配时，再以 `deterministic_actual_answer` 模式评估该次实际回答。没有匹配 ground truth 的请求不会生成答案质量分。两种模式都不是真实 LLM Judge、claim-level faithfulness 或安全评测；这些属于后续接入项。
+> **实现边界**：当前 `POST /v1/evolve` 会批量复测 98 条公开问题的来源命中，并将检索上下文送入 `internal/eval` 的规则评测器和确定性词法 Prober，记录 `deterministic_proxy` 质量、引用失败数和通过率后执行门禁。`POST /v1/evaluations` 可把真实请求 Trace 纳入 `runtime_evidence_rules` 批次，检查请求、回答、检索依据和 Contract 链是否完整；当请求问题与公开评估集精确匹配时，再评估该次实际回答。未设置 DeepSeek Key 时使用 `deterministic_actual_answer`；设置后使用 `deepseek_geval_actual_answer`，读取评分 token 的 logprobs 计算加权分。没有匹配 ground truth 的请求不会生成答案质量分。当前仍没有 claim-level faithfulness 或安全评测，真实 Judge 的线上方差也需实测验收。
 
 ## 评测器（internal/eval/）
 
@@ -33,7 +33,7 @@ type Evaluator interface {
 
 这样即使模型最可能输出 "4"，只要 p(5) 不为 0，分数就略高于 4，反映模型对 "5" 的部分置信。**单次跑分稳定**，不用多次平均。
 
-代码：`internal/eval/geval.go`。当前默认 Prober 依据词法重叠生成测试概率，不调用真实 Judge；接入模型需另行实现并验证 logprobs 口径。
+代码：`internal/eval/geval.go` 和 `internal/eval/deepseek_judge.go`。默认 Prober 依据词法重叠生成测试概率；设置 `DEEPSEEK_API_KEY` 后，真实请求 Trace 的答案评测使用 DeepSeek Chat Completions 的 `logprobs` 与 `top_logprobs`。外部模型不可用、响应缺少评分 token 或分布无效时失败关闭，不用词法分悄悄替代。
 
 ### HitRate@K / MRR@K（检索质量）
 

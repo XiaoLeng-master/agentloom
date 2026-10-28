@@ -3,7 +3,16 @@ package evolution
 import (
 	"errors"
 	"testing"
+
+	"github.com/XiaoLeng-master/agentloom/internal/eval"
 )
+
+type passingJudge struct{}
+
+func (passingJudge) Name() string { return "test_judge" }
+func (passingJudge) Eval(eval.Trace) eval.Score {
+	return eval.Score{Name: "test_judge", Value: 0.9, Pass: true}
+}
 
 func TestTraceBatchEvaluatesAndPersistsRuntimeEvidence(t *testing.T) {
 	batch, err := NewTraceBatch([]RuntimeTrace{
@@ -50,5 +59,17 @@ func TestTraceBatchScoresActualAnswerOnlyWithMatchingGroundTruth(t *testing.T) {
 	}
 	if batch.Reports[1].AnswerQuality != nil {
 		t.Fatalf("unmatched trace received a quality score: %+v", batch.Reports[1])
+	}
+}
+
+func TestTraceBatchUsesConfiguredRealJudge(t *testing.T) {
+	trace := RuntimeTrace{ID: "matched", Query: "question", Answer: "answer", ContractPhases: []string{"plan", "execute", "verify"}, RetrievalSources: []string{"guide.md"}}
+	batch, err := NewTraceBatchWithCases([]RuntimeTrace{trace}, []Case{{ID: "case-1", Question: "question", GroundTruth: "answer", SourceDoc: "guide.md"}}, passingJudge{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	quality := batch.Reports[0].AnswerQuality
+	if quality == nil || quality.Mode != "test_judge_actual_answer" || len(quality.Scores) != 5 || quality.Scores[4].Name != "test_judge" || !quality.Passed {
+		t.Fatalf("quality=%+v", quality)
 	}
 }

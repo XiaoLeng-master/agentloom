@@ -17,6 +17,7 @@ import (
 
 	"github.com/XiaoLeng-master/agentloom/internal/config"
 	"github.com/XiaoLeng-master/agentloom/internal/core"
+	"github.com/XiaoLeng-master/agentloom/internal/eval"
 	"github.com/XiaoLeng-master/agentloom/internal/evolution"
 	"github.com/XiaoLeng-master/agentloom/internal/gateway"
 	"github.com/XiaoLeng-master/agentloom/internal/infra"
@@ -69,6 +70,7 @@ type App struct {
 	corpusPath   string
 	history      experimentHistory
 	batchHistory *evolution.TraceBatchHistory
+	answerJudge  eval.Evaluator
 	access       AccessPolicy
 	chatSlots    chan struct{}
 }
@@ -89,6 +91,9 @@ func (a *App) WithMaxConcurrentChats(limit int) *App {
 
 // WithCorpusPath locates the public evaluation set for an offline experiment.
 func (a *App) WithCorpusPath(path string) *App { a.corpusPath = path; return a }
+
+// WithAnswerJudge enables a real judge for ground-truth-matched runtime traces.
+func (a *App) WithAnswerJudge(judge eval.Evaluator) *App { a.answerJudge = judge; return a }
 
 // WithExperimentHistory enables readback of local experiment evidence.
 func (a *App) WithExperimentHistory(dir string) *App {
@@ -354,7 +359,11 @@ func (a *App) evaluateTraces(w http.ResponseWriter, r *http.Request) {
 		write(w, 503, map[string]string{"error": "public corpus unavailable"})
 		return
 	}
-	batch, err := evolution.NewTraceBatchWithCases(traces, cases)
+	var judges []eval.Evaluator
+	if a.answerJudge != nil {
+		judges = append(judges, a.answerJudge)
+	}
+	batch, err := evolution.NewTraceBatchWithCases(traces, cases, judges...)
 	if err != nil {
 		write(w, 500, map[string]string{"error": "evaluation batch unavailable"})
 		return

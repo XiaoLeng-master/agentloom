@@ -21,6 +21,7 @@ export AGENTLOOM_ADMIN_TOKEN='替换为随机长令牌'
 export AGENTLOOM_PUBLIC_TOKEN='可选的访客令牌'
 export DEEPSEEK_API_KEY='只放在服务端环境变量'
 export DEEPSEEK_MODEL=deepseek-flash
+export DEEPSEEK_JUDGE_MODEL=deepseek-flash # 可选；未设置时沿用生成模型
 make run
 ```
 

@@ -67,7 +67,7 @@ curl localhost:8080/health   # {"status":"ok","agents":["kb-agent"]}
 
 `make run` 后打开 `http://localhost:8080/`，可在本地工作台使用 Chat、Trace、Benchmark 三个页面。Benchmark 首次通过只读 `GET /v1/bench` 展示基线，点击复测才调用会更新本地配置的 `POST /v1/evolve`。前端由同一个 Go 服务提供；在 `web/` 执行 `npm ci && npm run build` 可重新构建嵌入的静态资源（需 Node.js/npm）。仓库已包含构建产物，普通运行无需安装前端依赖。浏览器不接触 `DEEPSEEK_API_KEY`。
 
-`cmd/evolve` 会在相同数据集和语料上计算两次检索命中率，并输出数据哈希、逐条命中、失败来源归因、预测区间、实际变化和本地配置版本。服务运行时可用本地演示 token 调用 `POST /v1/evolve`；每次实验写入本地 `.agentloom/evolutions/`，通过 `GET /v1/evolutions` 或 `GET /v1/evolutions/{id}` 读回。门禁通过后，后续 `/v1/chat` 请求的 Trace 会显示新的配置版本和切分策略；如果实验证据保存失败，服务会立即恢复先前配置并在错误响应中返回回退版本。管理员还可把 1–100 个真实请求 Trace 提交到 `POST /v1/evaluations`，批次会检查请求、回答、检索依据和 Contract 链是否完整；问题与公开评估集精确匹配时，还会对该次实际生成的答案运行确定性 Prompt、RAG、工具、完成度和词法 G-Eval 检查。批次及其列表只允许管理员读取，且不复制用户问题或回答正文；没有匹配 ground truth 的请求不会获得答案质量分。真实 Judge、定时批评测、安全评测与线上监控触发的自动回滚仍未完成。数字随被索引的仓库文件变化，请以当次运行输出为准。
+`cmd/evolve` 会在相同数据集和语料上计算两次检索命中率，并输出数据哈希、逐条命中、失败来源归因、预测区间、实际变化和本地配置版本。服务运行时可用本地演示 token 调用 `POST /v1/evolve`；每次实验写入本地 `.agentloom/evolutions/`，通过 `GET /v1/evolutions` 或 `GET /v1/evolutions/{id}` 读回。门禁通过后，后续 `/v1/chat` 请求的 Trace 会显示新的配置版本和切分策略；如果实验证据保存失败，服务会立即恢复先前配置并在错误响应中返回回退版本。管理员还可把 1–100 个真实请求 Trace 提交到 `POST /v1/evaluations`，批次会检查请求、回答、检索依据和 Contract 链是否完整；问题与公开评估集精确匹配时，还会对该次实际生成的答案运行 Prompt、RAG、工具、完成度和 G-Eval 检查。未设置 `DEEPSEEK_API_KEY` 时 G-Eval 使用确定性词法代理；设置后改用 DeepSeek 返回的评分 token logprobs 加权计算，并可通过 `DEEPSEEK_JUDGE_MODEL` 单独指定 Judge 模型。批次及其列表只允许管理员读取，且不复制用户问题或回答正文；没有匹配 ground truth 的请求不会获得答案质量分。真实 Judge 的线上稳定性、定时批评测、安全评测与线上监控触发的自动回滚仍未验收。数字随被索引的仓库文件变化，请以当次运行输出为准。
 
 本地端到端演示（确定性演示模型、内存文档检索；不是在线 LLM 或生产知识库）：
 
