@@ -8,7 +8,7 @@
 
 [![Go](https://img.shields.io/badge/Go-1.22+-00ADD8.svg)](https://go.dev/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Status](https://img.shields.io/badge/status-WIP%20%7C%20skeleton-orange.svg)](#status)
+[![Status](https://img.shields.io/badge/status-local%20workbench%20%7C%20WIP-orange.svg)](#status)
 
 </div>
 
@@ -40,7 +40,7 @@ agentloom 把这三件事做在同一套平台里，并且**让每一环都咬�
 |---|---|---|
 | **多 Agent 分层协作** | Planner / Executor / Verifier 角色池与消息契约；子任务当前串行执行 | ✅ |
 | **Harness 自进化闭环** | 可手动触发同语料检索复测、确定性质量代理、引用失败统计、预测检验、门禁、本地配置生效与实验历史读回；真实 LLM Judge、Trace 驱动批评测及自动回滚仍未完成 | 🚧 |
-| **预测式归因** | 每次优化提交声明预期收益，评测验证预测成立与否，逐次变更可归因 | 📋 |
+| **预测式归因** | 本地检索实验记录预期 HitRate 变化区间及实际变化，并标记预测是否匹配；尚无自动候选生成和线上归因 | 🚧 |
 | **配置热更新** | 进程内引用计数替换；etcd Source 尚未实现 | ✅ |
 | **MCP 双传输适配** | stdio / HTTP JSON-RPC；请求取消、响应关联校验与有限 JSON Schema 参数校验；写工具默认不重试 | 🚧 |
 | **可评测 RAG** | 4 种切分策略可插拔 + 自建 98 条标注评估集，HitRate@K 可一键复现 | ✅ |
@@ -67,7 +67,7 @@ curl localhost:8080/health   # {"status":"ok","agents":["kb-agent"]}
 
 `make run` 后打开 `http://localhost:8080/`，可在本地工作台使用 Chat、Trace、Benchmark 三个页面。Benchmark 首次通过只读 `GET /v1/bench` 展示基线，点击复测才调用会更新本地配置的 `POST /v1/evolve`。前端由同一个 Go 服务提供；在 `web/` 执行 `npm ci && npm run build` 可重新构建嵌入的静态资源（需 Node.js/npm）。仓库已包含构建产物，普通运行无需安装前端依赖。浏览器不接触 `DEEPSEEK_API_KEY`。
 
-`cmd/evolve` 会在相同数据集和语料上计算两次检索命中率，并输出数据哈希、逐条命中、失败来源归因、预测区间、实际变化和本地配置版本。服务运行时可用本地演示 token 调用 `POST /v1/evolve`；每次实验写入本地 `.agentloom/evolutions/`，通过 `GET /v1/evolutions` 或 `GET /v1/evolutions/{id}` 读回。门禁通过后，后续 `/v1/chat` 请求的 Trace 会显示新的配置版本和切分策略。该接口是手动触发的检索实验，当前没有请求 Trace 驱动的定时评测；答案质量、安全性与自动回滚也尚未完成。数字随被索引的仓库文件变化，请以当次运行输出为准。
+`cmd/evolve` 会在相同数据集和语料上计算两次检索命中率，并输出数据哈希、逐条命中、失败来源归因、预测区间、实际变化和本地配置版本。服务运行时可用本地演示 token 调用 `POST /v1/evolve`；每次实验写入本地 `.agentloom/evolutions/`，通过 `GET /v1/evolutions` 或 `GET /v1/evolutions/{id}` 读回。门禁通过后，后续 `/v1/chat` 请求的 Trace 会显示新的配置版本和切分策略。该接口是手动触发的检索实验，当前没有请求 Trace 驱动的定时评测；确定性代理质量评测只检查检索上下文，不评价模型实际回答。真实回答质量、安全性与自动回滚仍未完成。数字随被索引的仓库文件变化，请以当次运行输出为准。
 
 本地端到端演示（确定性演示模型、内存文档检索；不是在线 LLM 或生产知识库）：
 
