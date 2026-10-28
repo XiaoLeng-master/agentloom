@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -48,20 +49,21 @@ type retrievalLog struct {
 }
 type retrievalKey struct{}
 type App struct {
-	gate       *gateway.Gateway
-	runtime    *orchestrator.Orchestrator
-	mu         sync.RWMutex
-	traces     map[string]Trace
-	store      TraceStore
-	queue      *infra.ToyQueue
-	worker     chan struct{}
-	failed     atomic.Int64
-	modelMode  bool
-	manager    *config.Manager
-	corpusPath string
-	history    *evolution.History
-	access     AccessPolicy
-	chatSlots  chan struct{}
+	gate         *gateway.Gateway
+	runtime      *orchestrator.Orchestrator
+	mu           sync.RWMutex
+	traces       map[string]Trace
+	store        TraceStore
+	queue        *infra.ToyQueue
+	worker       chan struct{}
+	failed       atomic.Int64
+	modelMode    bool
+	manager      *config.Manager
+	corpusPath   string
+	history      *evolution.History
+	batchHistory *evolution.TraceBatchHistory
+	access       AccessPolicy
+	chatSlots    chan struct{}
 }
 
 // WithConfigManager makes each request acquire one immutable configuration version.
@@ -84,6 +86,7 @@ func (a *App) WithCorpusPath(path string) *App { a.corpusPath = path; return a }
 // WithExperimentHistory enables readback of local experiment evidence.
 func (a *App) WithExperimentHistory(dir string) *App {
 	a.history = &evolution.History{Dir: dir}
+	a.batchHistory = &evolution.TraceBatchHistory{Dir: filepath.Join(dir, "trace-batches")}
 	return a
 }
 
@@ -154,6 +157,9 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/bench", a.bench)
 	mux.HandleFunc("GET /v1/evolutions", a.evolutions)
 	mux.HandleFunc("GET /v1/evolutions/{id}", a.experiment)
+	mux.HandleFunc("POST /v1/evaluations", a.evaluateTraces)
+	mux.HandleFunc("GET /v1/evaluations", a.evaluations)
+	mux.HandleFunc("GET /v1/evaluations/{id}", a.evaluation)
 	mux.HandleFunc("GET /health/live", func(w http.ResponseWriter, r *http.Request) { write(w, 200, map[string]string{"status": "ok"}) })
 	return mux
 }
@@ -266,6 +272,100 @@ func (a *App) experiment(w http.ResponseWriter, r *http.Request) {
 	write(w, 200, result)
 }
 
+func (a *App) evaluateTraces(w http.ResponseWriter, r *http.Request) {
+	if !a.access.adminAllowed(r) {
+		write(w, 403, map[string]string{"error": "invalid token"})
+		return
+	}
+	if a.batchHistory == nil {
+		write(w, 503, map[string]string{"error": "evaluation history unavailable"})
+		return
+	}
+	var input struct {
+		TraceIDs []string `json:"trace_ids"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&input); err != nil || len(input.TraceIDs) == 0 || len(input.TraceIDs) > 100 {
+		write(w, 400, map[string]string{"error": "trace_ids must contain 1 to 100 ids"})
+		return
+	}
+	seen := make(map[string]bool, len(input.TraceIDs))
+	for _, id := range input.TraceIDs {
+		if seen[id] {
+			write(w, 400, map[string]string{"error": "duplicate trace id"})
+			return
+		}
+		seen[id] = true
+	}
+	traces := make([]evolution.RuntimeTrace, 0, len(input.TraceIDs))
+	for _, id := range input.TraceIDs {
+		trace, err := a.getTrace(r.Context(), id)
+		if errors.Is(err, ErrTraceNotFound) {
+			write(w, 404, map[string]string{"error": "trace not found", "trace_id": id})
+			return
+		}
+		if err != nil {
+			write(w, 503, map[string]string{"error": "trace storage unavailable"})
+			return
+		}
+		item := evolution.RuntimeTrace{ID: trace.ID, Query: trace.Query, Answer: trace.Answer}
+		for _, contract := range trace.Contracts {
+			item.ContractPhases = append(item.ContractPhases, string(contract.Phase))
+		}
+		for _, retrieval := range trace.Retrievals {
+			item.RetrievalSources = append(item.RetrievalSources, retrieval.Source)
+		}
+		traces = append(traces, item)
+	}
+	batch, err := evolution.NewTraceBatch(traces)
+	if err != nil {
+		write(w, 500, map[string]string{"error": "evaluation batch unavailable"})
+		return
+	}
+	if err := a.batchHistory.Save(batch); err != nil {
+		write(w, 503, map[string]string{"error": "evaluation evidence not saved"})
+		return
+	}
+	write(w, 201, batch)
+}
+
+func (a *App) evaluations(w http.ResponseWriter, r *http.Request) {
+	if !a.access.adminAllowed(r) {
+		write(w, 403, map[string]string{"error": "invalid token"})
+		return
+	}
+	if a.batchHistory == nil {
+		write(w, 503, map[string]string{"error": "evaluation history unavailable"})
+		return
+	}
+	batches, err := a.batchHistory.List()
+	if err != nil {
+		write(w, 503, map[string]string{"error": "evaluation history unavailable"})
+		return
+	}
+	write(w, 200, batches)
+}
+
+func (a *App) evaluation(w http.ResponseWriter, r *http.Request) {
+	if !a.access.adminAllowed(r) {
+		write(w, 403, map[string]string{"error": "invalid token"})
+		return
+	}
+	if a.batchHistory == nil {
+		write(w, 503, map[string]string{"error": "evaluation history unavailable"})
+		return
+	}
+	batch, err := a.batchHistory.Get(r.PathValue("id"))
+	if errors.Is(err, evolution.ErrTraceBatchNotFound) {
+		write(w, 404, map[string]string{"error": "evaluation batch not found"})
+		return
+	}
+	if err != nil {
+		write(w, 503, map[string]string{"error": "evaluation history unavailable"})
+		return
+	}
+	write(w, 200, batch)
+}
+
 func (a *App) chat(w http.ResponseWriter, r *http.Request) {
 	if !a.access.publicAllowed(r) {
 		write(w, 403, map[string]string{"error": "invalid token"})
@@ -338,17 +438,7 @@ func (a *App) trace(w http.ResponseWriter, r *http.Request) {
 		write(w, 403, map[string]string{"error": "invalid token"})
 		return
 	}
-	var trace Trace
-	var err error
-	a.mu.RLock()
-	var ok bool
-	trace, ok = a.traces[r.PathValue("id")]
-	a.mu.RUnlock()
-	if !ok && a.store != nil {
-		trace, err = a.store.Get(r.Context(), r.PathValue("id"))
-	} else if !ok {
-		err = ErrTraceNotFound
-	}
+	trace, err := a.getTrace(r.Context(), r.PathValue("id"))
 	if errors.Is(err, ErrTraceNotFound) {
 		write(w, 404, map[string]string{"error": "trace not found"})
 		return
@@ -358,6 +448,19 @@ func (a *App) trace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	write(w, 200, trace)
+}
+
+func (a *App) getTrace(ctx context.Context, id string) (Trace, error) {
+	a.mu.RLock()
+	trace, ok := a.traces[id]
+	a.mu.RUnlock()
+	if ok {
+		return trace, nil
+	}
+	if a.store != nil {
+		return a.store.Get(ctx, id)
+	}
+	return Trace{}, ErrTraceNotFound
 }
 
 func write(w http.ResponseWriter, status int, value any) {

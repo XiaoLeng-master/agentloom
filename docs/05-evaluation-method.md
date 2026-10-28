@@ -2,7 +2,7 @@
 
 > 4 类评测器怎么算分、HitRate@K 怎么算、门禁怎么卡。
 
-> **实现边界**：当前 `POST /v1/evolve` 会批量复测 98 条公开问题的来源命中，并将检索上下文送入 `internal/eval` 的规则评测器和确定性词法 Prober，记录 `deterministic_proxy` 质量、引用失败数和通过率后执行门禁。它仍不是实时生成答案，也不是真实 LLM Judge、claim-level faithfulness 或安全评测；这些属于后续接入项。
+> **实现边界**：当前 `POST /v1/evolve` 会批量复测 98 条公开问题的来源命中，并将检索上下文送入 `internal/eval` 的规则评测器和确定性词法 Prober，记录 `deterministic_proxy` 质量、引用失败数和通过率后执行门禁。`POST /v1/evaluations` 可把真实请求 Trace 纳入 `runtime_evidence_rules` 批次，检查请求、回答、检索依据和 Contract 链是否完整。两者都不是真实 LLM Judge、claim-level faithfulness 或安全评测；这些属于后续接入项。
 
 ## 评测器（internal/eval/）
 
@@ -82,8 +82,13 @@ make bench
 # 评测器单测
 go test -race ./internal/eval/
 
-# 端到端（WIP：Trace 导入 → 批量评测 → 报告）
-# 详见 docs/roadmap.md
+# 真实请求 Trace 的运行证据批次（1–100 个 trace_id，需管理员令牌）
+curl -X POST -H 'Authorization: Bearer local-demo' -H 'Content-Type: application/json' \
+  -d '{"trace_ids":["<trace_id>"]}' localhost:8080/v1/evaluations
+
+# 使用管理员令牌读回批次列表或单个批次
+curl -H 'Authorization: Bearer local-demo' localhost:8080/v1/evaluations
+curl -H 'Authorization: Bearer local-demo' localhost:8080/v1/evaluations/<batch_id>
 ```
 
 输出示例（`make bench`）：

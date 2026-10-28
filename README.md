@@ -67,7 +67,7 @@ curl localhost:8080/health   # {"status":"ok","agents":["kb-agent"]}
 
 `make run` 后打开 `http://localhost:8080/`，可在本地工作台使用 Chat、Trace、Benchmark 三个页面。Benchmark 首次通过只读 `GET /v1/bench` 展示基线，点击复测才调用会更新本地配置的 `POST /v1/evolve`。前端由同一个 Go 服务提供；在 `web/` 执行 `npm ci && npm run build` 可重新构建嵌入的静态资源（需 Node.js/npm）。仓库已包含构建产物，普通运行无需安装前端依赖。浏览器不接触 `DEEPSEEK_API_KEY`。
 
-`cmd/evolve` 会在相同数据集和语料上计算两次检索命中率，并输出数据哈希、逐条命中、失败来源归因、预测区间、实际变化和本地配置版本。服务运行时可用本地演示 token 调用 `POST /v1/evolve`；每次实验写入本地 `.agentloom/evolutions/`，通过 `GET /v1/evolutions` 或 `GET /v1/evolutions/{id}` 读回。门禁通过后，后续 `/v1/chat` 请求的 Trace 会显示新的配置版本和切分策略。该接口是手动触发的检索实验，当前没有请求 Trace 驱动的定时评测；确定性代理质量评测只检查检索上下文，不评价模型实际回答。真实回答质量、安全性与自动回滚仍未完成。数字随被索引的仓库文件变化，请以当次运行输出为准。
+`cmd/evolve` 会在相同数据集和语料上计算两次检索命中率，并输出数据哈希、逐条命中、失败来源归因、预测区间、实际变化和本地配置版本。服务运行时可用本地演示 token 调用 `POST /v1/evolve`；每次实验写入本地 `.agentloom/evolutions/`，通过 `GET /v1/evolutions` 或 `GET /v1/evolutions/{id}` 读回。门禁通过后，后续 `/v1/chat` 请求的 Trace 会显示新的配置版本和切分策略。管理员还可把 1–100 个真实请求 Trace 提交到 `POST /v1/evaluations`，批次会检查请求、回答、检索依据和 Contract 链是否完整，并保存 Trace ID、失败聚类和检查结果；批次及其列表只允许管理员读取，且不复制用户问题或回答正文。该运行证据检查仍需手动触发，且不评价答案语义正确性。真实 Judge、定时批评测、安全评测与自动回滚仍未完成。数字随被索引的仓库文件变化，请以当次运行输出为准。
 
 本地端到端演示（确定性演示模型、内存文档检索；不是在线 LLM 或生产知识库）：
 
@@ -77,6 +77,9 @@ curl -H 'Authorization: Bearer local-demo' -H 'Content-Type: application/json' \
   -d '{"message":"planner executor"}' localhost:8080/v1/chat
 # 从返回的 trace_id 查询执行契约：
 curl -H 'Authorization: Bearer local-demo' localhost:8080/v1/traces/<trace_id>
+# 将一个或多个真实 Trace 纳入运行证据评测批次：
+curl -X POST -H 'Authorization: Bearer local-demo' -H 'Content-Type: application/json' \
+  -d '{"trace_ids":["<trace_id>"]}' localhost:8080/v1/evaluations
 ```
 
 演示链路经过本地网关、Planner、Executor 的 RAG Tool 和 Verifier。服务从公开的 README 和架构文档建立检索索引；Trace 的 `retrievals` 记录实际返回给 Executor 的片段和来源。初始配置为 fixed 切分（片段可能残缺），调用 `POST /v1/evolve` 通过检索与确定性质量代理门禁后切到 recursive；重启服务会重置为 fixed，但实验历史仍保留。默认使用确定性演示模型；设置本地环境变量 `DEEPSEEK_API_KEY` 后，Executor 使用 DeepSeek 官方 Chat Completions API 的 `deepseek-flash`（可用 `DEEPSEEK_MODEL` 覆盖），关闭 thinking 并限制 1200 tokens；演示 Planner 保持单任务规则，Verifier 使用确定性非空输出规则（并不验证答案事实正确性）。Key 仅由 Go 服务读取，请勿写入仓库或浏览器。DeepSeek 是生成模型，检索仍使用 HashEmbedder。Trace 在响应前写入进程内存；如需跨进程保留，可执行 `docker compose up -d redis`，再设置 `AGENTLOOM_REDIS_ADDR=127.0.0.1:16379` 启动服务。后台队列异步写 Redis，请求不等待持久化；队列满或写入失败可能丢失跨进程记录，关停时会排空已接收事件。Redis 启动检查失败会报错。当前仍未接入真实 LLM Judge、Trace 驱动定时批评测与自动回滚；Kafka、etcd、Milvus 仍未落地。
