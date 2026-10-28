@@ -4,10 +4,10 @@ AgentLoom 的公开演示边界是“可访问、可审计、可停止”的作�
 
 ## 本地模式
 
-不设置 `AGENTLOOM_PUBLIC_MODE` 时，Chat、Trace 和只读 Benchmark 可直接访问；会更新当前配置的 `POST /v1/evolve` 使用本地演示管理员令牌：
+不设置 `AGENTLOOM_PUBLIC_MODE` 时，Chat、Trace 和只读 Benchmark 可直接访问；会更新当前配置的 `POST /v1/evolve` 默认使用本地演示管理员令牌 `local-demo`。如果设置 `AGENTLOOM_ADMIN_TOKEN`，则改用指定令牌：
 
 ```bash
-export AGENTLOOM_ADMIN_TOKEN=local-demo
+export AGENTLOOM_ADMIN_TOKEN='替换为你自己的本地管理员令牌'
 make run
 ```
 

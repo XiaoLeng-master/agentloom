@@ -24,4 +24,7 @@ func TestHandlerServesWorkbenchAndAssets(t *testing.T) {
 	if asset.Code != http.StatusOK || !strings.Contains(asset.Header().Get("Content-Type"), "javascript") {
 		t.Fatalf("asset: %d %s", asset.Code, asset.Header().Get("Content-Type"))
 	}
+	if !strings.Contains(asset.Body.String(), "访问/管理员令牌") || !strings.Contains(asset.Body.String(), "代理质量") {
+		t.Fatal("workbench token or proxy-quality explanation missing from embedded asset")
+	}
 }
