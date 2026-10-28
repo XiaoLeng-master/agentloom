@@ -2,7 +2,7 @@
 
 > 4 类评测器怎么算分、HitRate@K 怎么算、门禁怎么卡。
 
-> **实现边界**：当前 `POST /v1/evolve` 会批量复测 98 条公开问题的来源命中，并将检索上下文送入 `internal/eval` 的规则评测器和确定性词法 Prober，记录 `deterministic_proxy` 质量、引用失败数和通过率后执行门禁。`POST /v1/evaluations` 可把真实请求 Trace 纳入 `runtime_evidence_rules` 批次，检查请求、回答、检索依据和 Contract 链是否完整。两者都不是真实 LLM Judge、claim-level faithfulness 或安全评测；这些属于后续接入项。
+> **实现边界**：当前 `POST /v1/evolve` 会批量复测 98 条公开问题的来源命中，并将检索上下文送入 `internal/eval` 的规则评测器和确定性词法 Prober，记录 `deterministic_proxy` 质量、引用失败数和通过率后执行门禁。`POST /v1/evaluations` 可把真实请求 Trace 纳入 `runtime_evidence_rules` 批次，检查请求、回答、检索依据和 Contract 链是否完整；当请求问题与公开评估集精确匹配时，再以 `deterministic_actual_answer` 模式评估该次实际回答。没有匹配 ground truth 的请求不会生成答案质量分。两种模式都不是真实 LLM Judge、claim-level faithfulness 或安全评测；这些属于后续接入项。
 
 ## 评测器（internal/eval/）
 

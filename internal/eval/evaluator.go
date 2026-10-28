@@ -2,10 +2,10 @@ package eval
 
 // Score is one evaluator's verdict on a trace.
 type Score struct {
-	Name   string
-	Value  float32 // 0..1
-	Reason string
-	Pass   bool
+	Name   string  `json:"name"`
+	Value  float32 `json:"value"` // 0..1
+	Reason string  `json:"reason"`
+	Pass   bool    `json:"pass"`
 }
 
 // Evaluator scores one dimension of a Trace. Implementations are registered

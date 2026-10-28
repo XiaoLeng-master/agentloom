@@ -316,7 +316,16 @@ func (a *App) evaluateTraces(w http.ResponseWriter, r *http.Request) {
 		}
 		traces = append(traces, item)
 	}
-	batch, err := evolution.NewTraceBatch(traces)
+	path := a.corpusPath
+	if path == "" {
+		path = "datasets/rag_eval_98.json"
+	}
+	cases, _, _, err := evolution.LoadPublicCorpus(path)
+	if err != nil {
+		write(w, 503, map[string]string{"error": "public corpus unavailable"})
+		return
+	}
+	batch, err := evolution.NewTraceBatchWithCases(traces, cases)
 	if err != nil {
 		write(w, 500, map[string]string{"error": "evaluation batch unavailable"})
 		return

@@ -14,7 +14,12 @@ import (
 
 func TestRuntimeTraceEvaluationBatchIsLinkedAndReadable(t *testing.T) {
 	dir := t.TempDir()
-	a := New([]rag.Document{{Source: "guide.md", Text: "agentloom planner executor verifier"}}).WithExperimentHistory(dir)
+	source := filepath.Join(dir, "guide.md")
+	if err := os.WriteFile(source, []byte("agentloom planner executor verifier"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	dataset := filepath.Join(dir, "cases.json")
+	a := New([]rag.Document{{Source: source, Text: "agentloom planner executor verifier"}}).WithExperimentHistory(dir).WithCorpusPath(dataset)
 	chat := httptest.NewRequest(http.MethodPost, "/v1/chat", strings.NewReader(`{"message":"planner executor"}`))
 	chat.Header.Set("Authorization", "Bearer local-demo")
 	chatResponse := httptest.NewRecorder()
@@ -24,9 +29,17 @@ func TestRuntimeTraceEvaluationBatchIsLinkedAndReadable(t *testing.T) {
 	}
 	var reply struct {
 		TraceID string `json:"trace_id"`
+		Reply   string `json:"reply"`
 	}
 	if err := json.Unmarshal(chatResponse.Body.Bytes(), &reply); err != nil || reply.TraceID == "" {
 		t.Fatalf("reply=%+v err=%v", reply, err)
+	}
+	cases, err := json.Marshal([]map[string]string{{"id": "runtime-1", "question": "planner executor", "groundTruth": reply.Reply, "sourceDoc": source}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dataset, cases, 0600); err != nil {
+		t.Fatal(err)
 	}
 
 	requestBody := `{"trace_ids":["` + reply.TraceID + `"]}`
@@ -42,9 +55,15 @@ func TestRuntimeTraceEvaluationBatchIsLinkedAndReadable(t *testing.T) {
 		Mode     string   `json:"mode"`
 		TraceIDs []string `json:"trace_ids"`
 		Passed   int      `json:"passed"`
+		Reports  []struct {
+			AnswerQuality *struct {
+				Mode   string `json:"mode"`
+				CaseID string `json:"case_id"`
+			} `json:"answer_quality"`
+		} `json:"reports"`
 	}
-	if err := json.Unmarshal(evaluationResponse.Body.Bytes(), &batch); err != nil || batch.ID == "" || batch.Mode != "runtime_evidence_rules" || batch.Passed != 1 || len(batch.TraceIDs) != 1 || batch.TraceIDs[0] != reply.TraceID {
-		t.Fatalf("batch=%+v err=%v", batch, err)
+	if err := json.Unmarshal(evaluationResponse.Body.Bytes(), &batch); err != nil || batch.ID == "" || batch.Mode != "runtime_evidence_rules" || batch.Passed != 1 || len(batch.TraceIDs) != 1 || batch.TraceIDs[0] != reply.TraceID || len(batch.Reports) != 1 || batch.Reports[0].AnswerQuality == nil || batch.Reports[0].AnswerQuality.Mode != "deterministic_actual_answer" || batch.Reports[0].AnswerQuality.CaseID != "runtime-1" {
+		t.Fatalf("batch=%+v err=%v body=%s", batch, err, evaluationResponse.Body.String())
 	}
 	get := httptest.NewRequest(http.MethodGet, "/v1/evaluations/"+batch.ID, nil)
 	get.Header.Set("Authorization", "Bearer local-demo")

@@ -11,6 +11,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/XiaoLeng-master/agentloom/internal/eval"
 )
 
 // RuntimeTrace is the minimal, privacy-conscious execution evidence consumed
@@ -26,10 +28,20 @@ type RuntimeTrace struct {
 
 // TraceEvaluation records deterministic checks over one runtime trace.
 type TraceEvaluation struct {
-	TraceID  string   `json:"trace_id"`
-	Passed   bool     `json:"passed"`
-	Checks   []string `json:"checks"`
-	Failures []string `json:"failures,omitempty"`
+	TraceID       string                  `json:"trace_id"`
+	Passed        bool                    `json:"passed"`
+	Checks        []string                `json:"checks"`
+	Failures      []string                `json:"failures,omitempty"`
+	AnswerQuality *ActualAnswerEvaluation `json:"answer_quality,omitempty"`
+}
+
+// ActualAnswerEvaluation scores the generated answer only when the runtime
+// query exactly matches a versioned public evaluation case.
+type ActualAnswerEvaluation struct {
+	Mode   string       `json:"mode"`
+	CaseID string       `json:"case_id"`
+	Passed bool         `json:"passed"`
+	Scores []eval.Score `json:"scores"`
 }
 
 // TraceBatch links real request traces to a reproducible evaluation result.
@@ -49,6 +61,12 @@ type TraceBatch struct {
 // NewTraceBatch evaluates actual runtime traces without persisting prompt or
 // answer content in the batch evidence file.
 func NewTraceBatch(traces []RuntimeTrace) (TraceBatch, error) {
+	return NewTraceBatchWithCases(traces, nil)
+}
+
+// NewTraceBatchWithCases adds deterministic actual-answer evaluation for
+// traces whose query exactly matches a public ground-truth case.
+func NewTraceBatchWithCases(traces []RuntimeTrace, cases []Case) (TraceBatch, error) {
 	if len(traces) == 0 {
 		return TraceBatch{}, fmt.Errorf("empty trace batch")
 	}
@@ -57,8 +75,21 @@ func NewTraceBatch(traces []RuntimeTrace) (TraceBatch, error) {
 		return TraceBatch{}, err
 	}
 	batch := TraceBatch{ID: hex.EncodeToString(random[:]), CreatedAt: time.Now().UTC(), Mode: "runtime_evidence_rules", FailureClusters: map[string]int{}}
+	groundTruth := make(map[string]Case, len(cases))
+	for _, c := range cases {
+		groundTruth[strings.TrimSpace(c.Question)] = c
+	}
 	for _, trace := range traces {
 		report := evaluateRuntimeTrace(trace)
+		if c, ok := groundTruth[strings.TrimSpace(trace.Query)]; ok {
+			report.AnswerQuality = evaluateActualAnswer(trace, c)
+			for _, score := range report.AnswerQuality.Scores {
+				if !score.Pass {
+					report.Failures = append(report.Failures, "answer_"+score.Name)
+				}
+			}
+			report.Passed = len(report.Failures) == 0
+		}
 		batch.TraceIDs = append(batch.TraceIDs, trace.ID)
 		batch.Reports = append(batch.Reports, report)
 		if report.Passed {
@@ -71,6 +102,18 @@ func NewTraceBatch(traces []RuntimeTrace) (TraceBatch, error) {
 		}
 	}
 	return batch, nil
+}
+
+func evaluateActualAnswer(trace RuntimeTrace, c Case) *ActualAnswerEvaluation {
+	tools := []string(nil)
+	if len(trace.RetrievalSources) > 0 {
+		tools = []string{"search_docs"}
+	}
+	input := eval.Trace{ID: trace.ID, Query: trace.Query, Answer: trace.Answer, Citations: trace.RetrievalSources, Tools: tools,
+		Expected: eval.Expected{Answer: c.GroundTruth, Tools: []string{"search_docs"}, GroundedIn: []string{c.SourceDoc}}}
+	registry := eval.NewRegistry(eval.PromptEvaluator{}, eval.RAGEvaluator{}, eval.SkillEvaluator{}, eval.AgentEvaluator{}, eval.GEval{})
+	report := eval.Build(input, registry)
+	return &ActualAnswerEvaluation{Mode: "deterministic_actual_answer", CaseID: c.ID, Passed: report.Pass, Scores: report.Scores}
 }
 
 func evaluateRuntimeTrace(trace RuntimeTrace) TraceEvaluation {
