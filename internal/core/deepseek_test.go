@@ -52,3 +52,23 @@ func TestDeepSeekToolRoundTrip(t *testing.T) {
 		t.Fatalf("second=%+v err=%v", second, err)
 	}
 }
+
+func TestDeepSeekDefaultModel(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Model string `json:"model"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if body.Model != "deepseek-flash" {
+			t.Errorf("default model = %q", body.Model)
+		}
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"ok"}}]}`))
+	}))
+	defer server.Close()
+	_, err := (DeepSeekClient{APIKey: "test-key", Endpoint: server.URL}).Complete(context.Background(), []Message{{Role: RoleUser, Content: "hello"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+}

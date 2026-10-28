@@ -56,3 +56,19 @@ func TestPublicDocsBecomeRetrievalEvidence(t *testing.T) {
 		t.Fatalf("role responsibilities missing from evidence: %+v", trace.Retrievals)
 	}
 }
+
+func TestLocalAdminTokenOverride(t *testing.T) {
+	handler := app.New(nil).WithAccessPolicy(app.AccessPolicy{PublicMode: true, AdminToken: "custom-admin"}).Handler()
+	for _, token := range []string{"local-demo", "custom-admin"} {
+		req := httptest.NewRequest(http.MethodPost, "/v1/evolve", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, req)
+		if token == "local-demo" && response.Code != http.StatusForbidden {
+			t.Fatalf("default token remained valid: status %d", response.Code)
+		}
+		if token == "custom-admin" && response.Code == http.StatusForbidden {
+			t.Fatalf("configured token rejected: status %d", response.Code)
+		}
+	}
+}

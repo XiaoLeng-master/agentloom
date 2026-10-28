@@ -81,6 +81,8 @@ func main() {
 	local.WithConfigManager(mgr).WithExperimentHistory(".agentloom/evolutions")
 	if publicMode {
 		local.WithAccessPolicy(app.AccessPolicy{PublicMode: true, PublicToken: publicToken, AdminToken: adminToken}).WithMaxConcurrentChats(4)
+	} else if adminToken != "" {
+		local.WithAccessPolicy(app.AccessPolicy{PublicMode: true, AdminToken: adminToken})
 	}
 	if redisAddr := os.Getenv("AGENTLOOM_REDIS_ADDR"); redisAddr != "" {
 		store := app.NewRedisTraceStore(redisAddr, 24*time.Hour)

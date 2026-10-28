@@ -33,7 +33,7 @@ func (c DeepSeekClient) Complete(ctx context.Context, msgs []Message) (Message, 
 	}
 	model := c.Model
 	if model == "" {
-		model = "deepseek-chat"
+		model = "deepseek-flash"
 	}
 	items := make([]map[string]any, 0, len(msgs))
 	for _, m := range msgs {
